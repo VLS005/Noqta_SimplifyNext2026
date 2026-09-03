@@ -1,0 +1,1 @@
+# _SimplifyNext2026
