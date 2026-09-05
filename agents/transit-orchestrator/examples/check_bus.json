@@ -1,0 +1,25 @@
+{
+  "journey": {
+    "user_id": "prakriti-demo",
+    "bus_stop_code": "27211",
+    "expected_bus": "199",
+    "destination": "Boon Lay MRT",
+    "original_eta_minutes": 3,
+    "preferences": {
+      "minimise_walking": true,
+      "prefer_sheltered_paths": true,
+      "prefer_tactile_paving": true,
+      "prefer_signalised_crossings": true,
+      "avoid_stairs": true,
+      "maximum_transfers": 1
+    }
+  },
+  "cane_telemetry": {
+    "device_id": "cane-prakriti-01",
+    "battery_percent": 84,
+    "heading_degrees": 270,
+    "walking_speed_mps": 0,
+    "camera_ready": true
+  },
+  "demo_scenario": "off_service"
+}
