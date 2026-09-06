@@ -1,6 +1,4 @@
-# SimplifyNext 2026: Agentic Routing System
-
-This repository contains a cutting-edge multi-agent routing system designed to provide safe, accessible, and highly-contextualized navigation for visually impaired users.
+# Routing Agent
 
 ## How to Run the System
 
@@ -16,13 +14,13 @@ Once running, you can interact with the agentic endpoints (like triggering navig
 
 ## The Multi-Agent Architecture
 
-This system relies on a swarm of specialized, autonomous sub-agents coordinated by a central orchestrator.
+This system relies on a 7 of specialized, autonomous sub-agents coordinated by a central orchestrator.
 
 ### 1. `RoutingAgent` (The Orchestrator)
 The central intelligence of the backend. It receives the user's request and orchestrates a complex pipeline of sub-agents to find, score, translate, and execute the best possible route. It also manages the **Live Navigation Simulator**, looping through instructions and pausing them if safety alerts arise.
 
 ### 2. `DirectionFinderAgent`
-Responsible for the raw geographical data. It calls external providers (like Google Routes API and OpenStreetMap) to generate multiple candidate paths between the origin and destination.
+Responsible for the raw geographical data. It calls external providers (like Google Routes API and OpenStreetMap) to generate multiple candidate paths between the origin and destination, with specific route tags such as tactile_paving and steps to cater the route to blind users. 
 
 ### 3. `AccessibilityAgent`
 The safety evaluator. It ranks and scores the candidate routes based on the user's specific mobility profile, penalizing routes with high crowding, poor lighting, or lack of tactile paving, and rewarding step-free access.
