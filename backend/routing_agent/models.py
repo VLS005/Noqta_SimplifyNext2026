@@ -11,6 +11,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ENUMS
@@ -69,6 +73,14 @@ class Waypoint(BaseModel):
         default=None,
         description="Straight-line metres to the next waypoint (None for final waypoint)",
     )
+    travel_mode_to_next: str | None = Field(
+        default=None,
+        description="Mode of travel to next waypoint (e.g., WALKING, TRANSIT)",
+    )
+    duration_to_next_s: int | None = Field(
+        default=None,
+        description="Provider-estimated duration to next waypoint in seconds",
+    )
     bearing_to_next_deg: float | None = Field(
         default=None,
         description="Compass bearing (0–360) to the next waypoint",
@@ -107,6 +119,9 @@ class RoutePlan(BaseModel):
         default=0, description="Personalised ETA in seconds (set by ETAAgent)"
     )
     distance_m: float
+    walking_distance_m: float | None = Field(default=None)
+    transit_duration_s: int | None = Field(default=None)
+    provider_duration_s: int | None = Field(default=None)
     rank: int = Field(
         default=0,
         description="Accessibility rank assigned by AccessibilityAgent. rank=1 is most accessible/safe.",
@@ -257,6 +272,7 @@ class PaceUpdateMessage(BaseMessage):
     """Stub — from Pace Tracking Agent. Received for awareness only."""
     message_type: Literal[MessageType.PACE_UPDATE] = MessageType.PACE_UPDATE
     source_agent: str = "pace_agent"
+    user_id: str = Field(default="anonymous")
     current_pace_mps: float = Field(gt=0)
     deviation_factor: float = Field(
         description="actual_pace / expected_pace — 1.0 = on pace, <1.0 = slower"

@@ -5,11 +5,15 @@ processes them via AWS Rekognition, and returns navigation instructions.
 """
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
 import logging
 import math
 from typing import Any
 import boto3
 import cv2
+
+load_dotenv()
 
 from backend.routing_agent.config import get_settings
 from backend.routing_agent.models import (
@@ -130,6 +134,26 @@ class VisionAgent:
         
         return "Path is completely clear. Continue moving straight forward."
 
+    # ─── Burst Screenshots and Bounding Boxes ─────────────────────────────────
+
+    def _draw_bounding_boxes(self, img: np.ndarray, labels: list[dict]) -> np.ndarray:
+        height, width = img.shape[:2]
+        for label in labels:
+            name = label.get('Name', 'object')
+            for instance in label.get('Instances', []):
+                box = instance.get('BoundingBox', {})
+                if not box:
+                    continue
+                
+                x = int(box.get('Left', 0) * width)
+                y = int(box.get('Top', 0) * height)
+                w = int(box.get('Width', 0) * width)
+                h = int(box.get('Height', 0) * height)
+                
+                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(img, name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        return img
+
     # ─── Inbound ──────────────────────────────────────────────────────────────
 
     def parse(self, raw: dict[str, Any]) -> VisionResponseMessage:
@@ -140,61 +164,93 @@ class VisionAgent:
 
     # ─── Outbound ─────────────────────────────────────────────────────────────
 
-    async def send(self, message: BaseMessage) -> bool:
-        """Dispatches outbound logic. Always enforces proximity gate first."""
+    async def send(self, message: BaseMessage, on_obstruction_callback=None) -> bool:
+        import time
+        import asyncio
+        import numpy as np
+
         if not isinstance(message, VisionRequestMessage):
-            logger.error(
-                "VisionAgent.send: expected VisionRequestMessage",
-                extra={"type": type(message).__name__},
-            )
             return False
             
-        # 1. Enforce the 5-meter proximity safety gate
         settings = get_settings()
         gate_m = settings.vision_proximity_gate_m
 
         if message.user_distance_m > gate_m:
-            raise ProximityGateError(
-                f"Vision request rejected: user is {message.user_distance_m:.1f} m from waypoint "
-                f"(gate is {gate_m} m). Vision is only allowed within {gate_m} m of fine-motor targets."
-            )
+            raise ProximityGateError(f"Gate {gate_m}m exceeded.")
 
-        # 2. Enforce the Motion Throttle to protect your $10 budget
         if not self.is_moving():
-            logger.info("Vision skipped: User is standing still. Saving API budget.")
             return False
 
-        # 3. Guard against accidental credit overruns
         if self.api_call_count >= self.MAX_ALLOWED_CALLS:
-            raise BudgetExceededError("AWS Safety Limit reached! Aborting call to protect your $10 budget.")
+            raise BudgetExceededError("AWS Safety Limit reached.")
 
-        logger.info(
-            "VisionAgent: Gate passed. Calling local AWS Rekognition pipeline.",
-            extra={"session_id": message.session_id, "waypoint_id": message.waypoint_id}
-        )
+        logger.info("VisionAgent: Starting live session for 30s.")
+        
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            logger.error("VisionAgent: Failed to open webcam.")
+            return False
+
+        start_time = time.time()
+        last_api_call = 0
+        last_labels = []
 
         try:
-            # Capture frame payload data
-            frame_bytes = self.capture_frame()
-            
-            # Send binary image payload directly to AWS
-            self.api_call_count += 1
-            response = self.rekognition_client.detect_labels(
-                Image={'Bytes': frame_bytes},
-                MaxLabels=15,
-                MinConfidence=70.0
-            )
-            
-            # Process spatial geometric analysis
-            labels = response.get('Labels', [])
-            guidance_text = self.sectorize_and_guide(labels)
-            
-            # Print text to terminal (Simulated Text-To-Speech)
-            print(f"\n[TTS AUDIO OUTPUT]: {guidance_text}\n")
-            
-            # Mock generating a valid return response payload to hand back to routing_agent
-            return True
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                current_time = time.time()
+                
+                if current_time - start_time > 30:
+                    logger.info("VisionAgent: 30s timeout reached.")
+                    break
+                    
+                height, width = frame.shape[:2]
+                if height > 720:
+                    scale = 720 / float(height)
+                    frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-        except Exception as e:
-            logger.error(f"VisionAgent pipeline failed processing locally: {str(e)}")
-            return False
+                # Throttle AWS call to 1 every 3 seconds
+                if current_time - last_api_call >= 3.0:
+                    last_api_call = current_time
+                    ret_encode, buffer = cv2.imencode('.jpg', frame)
+                    if ret_encode:
+                        self.api_call_count += 1
+                        try:
+                            loop = asyncio.get_running_loop()
+                            response = await loop.run_in_executor(
+                                None, 
+                                lambda: self.rekognition_client.detect_labels(
+                                    Image={'Bytes': buffer.tobytes()},
+                                    MaxLabels=15,
+                                    MinConfidence=70.0
+                                )
+                            )
+                            last_labels = response.get('Labels', [])
+                            
+                            if last_labels:
+                                guidance_text = self.sectorize_and_guide(last_labels)
+                                if "completely clear" not in guidance_text and on_obstruction_callback:
+                                    asyncio.create_task(on_obstruction_callback(guidance_text))
+                        except Exception as e:
+                            logger.error(f"Rekognition error: {e}")
+
+                annotated_frame = self._draw_bounding_boxes(frame.copy(), last_labels)
+                cv2.imshow("Live Vision Feedback", annotated_frame)
+                
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    logger.info("VisionAgent: User quit live session.")
+                    break
+                
+                await asyncio.sleep(0.01)
+
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            # On mac we often need 4 waitKeys to flush events and close the window properly
+            for _ in range(4):
+                cv2.waitKey(1)
+            
+        return True

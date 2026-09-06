@@ -1,114 +1,46 @@
-"""
-Estimates personalized journey duration for a RoutePlan.
-Accounts for fine-motor requirements using the user's mobility profile.
-Looks up average walking pace from DynamoDB when available.
-"""
+"""Calculate personalised transit ETA without treating bus/train distance as walking."""
 from __future__ import annotations
-
 import logging
-
 from backend.routing_agent.config import get_settings
-from backend.routing_agent.models import RoutePlan, MobilityProfile
+from backend.routing_agent.models import MobilityProfile, RoutePlan
 from backend.shared.vector_store import VectorStore, get_vector_store
-
 logger = logging.getLogger(__name__)
 
-
 class ETAAgent:
-    """
-    Estimates personalised journey duration for a RoutePlan.
-    Returns duration in whole seconds.
-    Looks up user's average pace from DynamoDB; falls back to profile default.
-    """
-
     def __init__(self, store: VectorStore | None = None) -> None:
         self._settings = get_settings()
         self._store = store or get_vector_store()
 
-    async def estimate(
-        self,
-        route: RoutePlan,
-        profile: MobilityProfile,
-        user_id: str | None = None,
-    ) -> RoutePlan:
-        """
-        Compute ETA and return an updated RoutePlan with estimated_duration_s set.
-        If user_id is provided, looks up average pace from DynamoDB first.
-        """
-        # Determine pace to use
-        pace_used = profile.preferred_pace_mps
-        pace_source = "profile"
-
+    async def estimate(self, route: RoutePlan, profile: MobilityProfile, user_id: str | None = None) -> RoutePlan:
+        pace, source = profile.preferred_pace_mps, "profile"
         if user_id:
             try:
                 item = await self._store.get(f"PACE#{user_id}", "PACE#current")
-                if item and "average_pace_mps" in item:
-                    stored_pace = float(item["average_pace_mps"])
-                    if 0.1 <= stored_pace <= 3.0:
-                        pace_used = stored_pace
-                        pace_source = "dynamodb"
-                        print(
-                            f"[ETAAgent] Found stored pace for user '{user_id}': "
-                            f"{stored_pace:.2f} m/s"
-                        )
+                candidate = float(item.get("average_pace_mps")) if item else None
+                if candidate is not None and 0.1 <= candidate <= 3:
+                    pace, source = candidate, "dynamodb"
             except Exception as exc:
-                logger.warning(f"ETAAgent: pace lookup failed, using profile default: {exc}")
-                print(f"[ETAAgent] Pace lookup failed for user '{user_id}': {exc}")
+                logger.warning("ETA pace lookup failed: %s", exc)
+        walking_distance = route.walking_distance_m or sum((wp.distance_to_next_m or 0) for wp in route.waypoints if wp.travel_mode_to_next == "WALKING")
+        transit_duration = route.transit_duration_s or sum((wp.duration_to_next_s or 0) for wp in route.waypoints if wp.travel_mode_to_next == "TRANSIT")
+        transit_legs = sum(wp.travel_mode_to_next == "TRANSIT" for wp in route.waypoints)
+        walking_s = walking_distance / pace
+        fine_motor_s = sum(wp.fine_motor_required for wp in route.waypoints) * self._settings.fine_motor_buffer_s
+        transfer_s = max(0, transit_legs - 1) * self._settings.transit_transfer_buffer_s
+        calculated_s = int(round(walking_s + transit_duration + fine_motor_s + transfer_s))
+        provider_s = route.provider_duration_s or 0
+        total_s = max(calculated_s, provider_s) if provider_s else calculated_s
+        logger.info("ETA route=%s walking=%.0fm transit=%ss provider=%ss personalised=%ss", route.label, walking_distance, transit_duration, provider_s, total_s)
+        return route.model_copy(update={"walking_distance_m": walking_distance, "transit_duration_s": transit_duration, "estimated_duration_s": total_s})
 
-        total_distance_m = sum(
-            wp.distance_to_next_m
-            for wp in route.waypoints
-            if wp.distance_to_next_m is not None
-        )
-        base_s = total_distance_m / pace_used
-
-        fine_motor_count = sum(
-            1 for wp in route.waypoints if wp.fine_motor_required
-        )
-        buffer_s = fine_motor_count * self._settings.fine_motor_buffer_s
-
-        total_s = int(round(base_s + buffer_s))
-
-        print(
-            f"[ETAAgent] Route '{route.label}' | distance={total_distance_m:.1f}m | "
-            f"pace={pace_used:.2f} m/s (source: {pace_source}) | "
-            f"base_s={base_s:.0f} | fine_motor_buffer={buffer_s}s | total_eta={total_s}s"
-        )
-
-        logger.debug(
-            "ETAAgent: computed",
-            extra={
-                "route_id": route.id,
-                "distance_m": total_distance_m,
-                "pace_mps": pace_used,
-                "pace_source": pace_source,
-                "base_s": base_s,
-                "fine_motor_count": fine_motor_count,
-                "buffer_s": buffer_s,
-                "total_s": total_s,
-            },
-        )
-        return route.model_copy(update={"estimated_duration_s": total_s})
-
-    async def estimate_all(
-        self,
-        routes: list[RoutePlan],
-        profile: MobilityProfile,
-        user_id: str | None = None,
-    ) -> list[RoutePlan]:
-        """Estimate ETA for all candidates."""
-        return [await self.estimate(r, profile, user_id) for r in routes]
+    async def estimate_all(self, routes: list[RoutePlan], profile: MobilityProfile, user_id: str | None = None) -> list[RoutePlan]:
+        return [await self.estimate(route, profile, user_id) for route in routes]
 
     @staticmethod
     def format_duration(seconds: int) -> str:
-        """
-        Return a human-readable duration string suitable for TTS.
-        e.g. 90 → 'about 1 minute 30 seconds', 420 → 'about 7 minutes'
-        """
-        if seconds < 60:
-            return f"about {seconds} seconds"
-        minutes = seconds // 60
-        remainder = seconds % 60
+        minutes, remainder = divmod(max(0, seconds), 60)
+        if minutes < 1:
+            return f"about {remainder} seconds"
         if remainder == 0:
             return f"about {minutes} minute{'s' if minutes != 1 else ''}"
         return f"about {minutes} minute{'s' if minutes != 1 else ''} and {remainder} seconds"

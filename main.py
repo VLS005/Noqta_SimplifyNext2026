@@ -24,8 +24,7 @@ from pydantic import BaseModel
 from backend.routing_agent.routing_agent import RoutingAgent
 from backend.routing_agent.config import get_settings
 from backend.routing_agent.models import MobilityProfile
-from backend.routing_agent.route_lock import RouteLockError
-from backend.routing_agent.voice_agent import VoiceParseError
+
 from backend.routing_agent.bedrock_client import get_bedrock_client
 from backend.shared.vector_store import get_vector_store
 
@@ -98,8 +97,8 @@ app = FastAPI(
     title="SimplifyNext — Agent Orchestrator",
     description="Single entry point for the SimplifyNext multi-agent navigation system.",
     version="0.1.0",
-    docs_url="/docs" if settings.is_development else None,
-    redoc_url="/redoc" if settings.is_development else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
 
@@ -114,9 +113,7 @@ app.add_middleware(
 
 # ─── Request/Response schemas ─────────────────────────────────────────────────
 
-class CreateSessionReq(BaseModel):
-    user_id: str
-    profile: MobilityProfile | None = None
+
 
 
 class RouteRequestReq(BaseModel):
@@ -129,8 +126,6 @@ class RouteRequestReq(BaseModel):
     destination_lon: float | None = None
 
 
-class VoiceConfirmReq(BaseModel):
-    raw_voice_transcript: str
 
 
 class VisionAssistReq(BaseModel):
@@ -146,18 +141,7 @@ async def health() -> dict:
     return {"status": "ok", "service": "simplify-next-orchestrator", "version": "0.1.0"}
 
 
-# ─── Sessions ─────────────────────────────────────────────────────────────────
 
-@app.post("/api/sessions", status_code=status.HTTP_201_CREATED, tags=["Sessions"])
-async def create_session(body: CreateSessionReq, agent: RoutingAgentDep) -> dict:
-    session = await agent.create_session(body.user_id, body.profile)
-    return {"session_id": session.session_id, "user_id": session.user_id}
-
-
-@app.get("/api/sessions/{session_id}", tags=["Sessions"])
-async def get_session_state(session_id: str, agent: RoutingAgentDep) -> dict:
-    state = await agent.get_route_state(session_id)
-    return {"session_id": session_id, "state": state.value}
 
 
 # ─── Route planning ───────────────────────────────────────────────────────────
@@ -178,11 +162,18 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
             origin_lat=body.origin_lat, origin_lon=body.origin_lon,
             destination_lat=body.destination_lat, destination_lon=body.destination_lon,
         )
-        prompt = await agent.handle_route_request(msg)
-        result = prompt.model_dump(mode="json")
-        print(f"\n[API] Route request SUCCESS — {len(result.get('route_options', []))} routes returned")
-        print(f"[API] Response prompt: {result.get('prompt_text', '')[:200]}...")
-        await ws_manager.broadcast(result["session_id"], {"event": "route_choice_prompt", "data": result})
+        locked, notification = await agent.handle_route_request(msg)
+        result = {
+            "status": "locked",
+            "session_id": session_id,
+            "locked_route_id": locked.route_plan.id,
+            "route_label": locked.route_plan.label,
+            "first_instruction": notification.first_micro_instruction,
+            "estimated_duration_s": locked.route_plan.estimated_duration_s,
+            "total_waypoints": notification.total_waypoints,
+        }
+        print(f"\n[API] Route request SUCCESS — auto-locked best route: '{result['route_label']}'")
+        await ws_manager.broadcast(session_id, {"event": "route_locked", "data": result})
         return result
     except Exception as exc:
         print(f"[API] Route request FAILED: {exc}")
@@ -190,46 +181,7 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/api/sessions/{session_id}/voice-confirm", tags=["Routing"])
-async def voice_confirm(session_id: str, body: VoiceConfirmReq, agent: RoutingAgentDep) -> dict:
-    """Accepts voice transcript, locks the route, dispatches StartTimerEvent."""
-    from backend.routing_agent.models import VoiceRouteSelectionMessage
-    print(f"\n[API] POST /api/sessions/{session_id}/voice-confirm")
-    print(f"[API] Transcript: '{body.raw_voice_transcript}'")
-    try:
-        msg = VoiceRouteSelectionMessage(
-            session_id=session_id, raw_voice_transcript=body.raw_voice_transcript,
-        )
-        locked, notification = await agent.handle_voice_selection(msg)
-        result = {
-            "status": "locked",
-            "locked_route_id": locked.route_plan.id,
-            "route_label": locked.route_plan.label,
-            "first_instruction": notification.first_micro_instruction,
-            "estimated_duration_s": locked.route_plan.estimated_duration_s,
-            "total_waypoints": notification.total_waypoints,
-        }
-        print(f"[API] Voice confirm SUCCESS — route locked: '{result['route_label']}'")
-        await ws_manager.broadcast(session_id, {"event": "route_locked", "data": result})
-        return result
-    except VoiceParseError as exc:
-        print(f"[API] Voice confirm FAILED (parse error): {exc}")
-        raise HTTPException(status_code=422, detail=f"Voice parse error: {exc}")
-    except RouteLockError as exc:
-        print(f"[API] Voice confirm FAILED (lock conflict): {exc}")
-        raise HTTPException(status_code=409, detail=f"Lock conflict: {exc}")
-    except Exception as exc:
-        print(f"[API] Voice confirm FAILED: {exc}")
-        logger.exception("voice-confirm failed")
-        raise HTTPException(status_code=500, detail=str(exc))
 
-
-@app.get("/api/sessions/{session_id}/locked-route", tags=["Routing"])
-async def get_locked_route(session_id: str, agent: RoutingAgentDep) -> dict:
-    locked = await agent.get_locked_route(session_id)
-    if locked is None:
-        raise HTTPException(status_code=404, detail="No locked route for this session")
-    return locked.model_dump(mode="json")
 
 
 # ─── On-demand vision ─────────────────────────────────────────────────────────

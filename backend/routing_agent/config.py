@@ -2,6 +2,7 @@
 All configuration for the Routing Agent, loaded from environment variables.
 - Pydantic BaseSettings provides automatic env-var parsing, type coercion, and .env file loading.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -9,6 +10,19 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# {
+#   "origin_label": "Marina Bay Sands",
+#   "destination_label": "Jewel Changi",
+#   "user_id": "anonymous",
+#   "origin_lat": 0,
+#   "origin_lon": 0,
+#   "destination_lat": 0,
+#   "destination_lon": 0
+# }
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -24,12 +38,13 @@ class Settings(BaseSettings):
     routing_agent_port: int = Field(default=8010)
 
     # ─── AWS Core ─────────────────────────────────────────────────────────────
-    aws_region: str = Field(default="ap-southeast-1")
+    aws_region: str = Field(default="us-east-1")
     aws_access_key_id: str | None = Field(default=None)          # TODO: replace with IAM role
     aws_secret_access_key: str | None = Field(default=None)      # TODO: replace with IAM role
+    aws_session_token: str | None = Field(default=None)
 
     # ─── Amazon Bedrock ───────────────────────────────────────────────────────
-    bedrock_region: str = Field(default="ap-southeast-1")
+    bedrock_region: str = Field(default="us-east-1")
     bedrock_model_id: str = Field(default="anthropic.claude-3-5-sonnet-20241022-v2:0")
     bedrock_endpoint_url: str | None = Field(default=None)
 
@@ -40,13 +55,10 @@ class Settings(BaseSettings):
     google_maps_api_key: str | None = Field(default=None)
 
     # ─── DynamoDB ─────────────────────────────────────────────────────────────
-    dynamodb_table_name: str = Field(default="simplify-next-store")
+    dynamodb_table_name: str = Field(default="DoraDB")
     dynamodb_endpoint_url: str | None = Field(default=None)      # None = real AWS; set for local
 
-    # ─── S3 Vectors ───────────────────────────────────────────────────────────
-    s3_vectors_bucket: str = Field(default="simplify-next-vectors")
-    s3_vectors_index: str = Field(default="simplify-next-index")
-    store_backend: str = Field(default="dynamodb")
+
 
     # ─── External agents ──────────────────────────────────────────────────────
     personalization_agent_url: str = Field(
@@ -58,6 +70,7 @@ class Settings(BaseSettings):
     vision_proximity_gate_m: float = Field(default=5.0)
     max_route_candidates: int = Field(default=3)
     fine_motor_buffer_s: int = Field(default=30)
+    transit_transfer_buffer_s: int = Field(default=120)
 
     @property
     def is_development(self) -> bool:

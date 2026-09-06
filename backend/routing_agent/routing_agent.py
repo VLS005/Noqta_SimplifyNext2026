@@ -5,6 +5,7 @@ Central orchestrator for the Routing Agent — imports and coordinates all sub-a
 from __future__ import annotations
 
 import logging
+from dotenv import load_dotenv
 
 from backend.routing_agent.communication_agent import PersonalizationAdapter, ObstructionAdapter
 from backend.routing_agent.vision_agent import VisionAgent, ProximityGateError
@@ -36,6 +37,7 @@ from backend.shared.vector_store import VectorStore, get_vector_store
 
 logger = logging.getLogger(__name__)
 
+load_dotenv()
 
 class RoutingAgentError(Exception):
     """Base exception for RoutingAgent errors."""
@@ -61,7 +63,7 @@ class RoutingAgent:
 
         # Sub-agents
         self._direction_finder = DirectionFinderAgent(self._bedrock)
-        self._accessibility = AccessibilityAgent()
+        self._accessibility = AccessibilityAgent(self._bedrock)
         self._eta = ETAAgent(store=self._store)
         self._instruction_parser = InstructionParsingAgent(self._bedrock)
         self._voice = VoiceAgent(self._bedrock)
@@ -161,7 +163,7 @@ class RoutingAgent:
 
         # Step 3 — accessibility scoring (dynamic weights from profile)
         print(f"\n[RoutingAgent] Step 3 — Calling AccessibilityAgent (dynamic weights)...")
-        candidates = self._accessibility.score_all(candidates, profile)
+        candidates = await self._accessibility.score_all(candidates, profile)
         print(f"[RoutingAgent] Step 3 — AccessibilityAgent scored and ranked {len(candidates)} candidates")
 
         # Step 4 — personalised ETA (with DynamoDB pace lookup)
@@ -174,20 +176,74 @@ class RoutingAgent:
         candidates = await self._instruction_parser.translate_all(candidates, profile)
         print(f"[RoutingAgent] Step 5 — InstructionParsingAgent translated {len(candidates)} candidates")
 
-        # Step 6 — persist + state transition
-        await self._lock_svc.present_candidates(session.session_id, candidates)
-        print(f"[RoutingAgent] Step 6 — Candidates persisted, state → CANDIDATES_PRESENTED")
+        # Step 6 — Auto-lock the highest ranked route (Route 1)
+        top_route = candidates[0]
+        second_route = candidates[1] if len(candidates) > 1 else None
 
-        # Step 7 — build prompt
-        prompt_msg = self._build_route_choice_prompt(session.session_id, candidates)
-        print(f"\n[RoutingAgent] Step 7 — Route choice prompt built")
-        print(f"[RoutingAgent] Prompt text: {prompt_msg.prompt_text}")
+
+
+        await self._lock_svc.present_candidates(session.session_id, candidates)
+        locked = await self._lock_svc.lock(session.session_id, top_route.id)
+        
+        print(f"[RoutingAgent] Step 6 — Auto-locked Route '{locked.route_plan.label}'")
+
+        # Step 7 — Dispatch start timer
+        await self._dispatch_start_timer(locked)
+        
+        first_instruction = (
+            locked.route_plan.micro_instructions[0]
+            if locked.route_plan.micro_instructions
+            else locked.route_plan.raw_instructions[0]
+            if locked.route_plan.raw_instructions
+            else "Proceed to the starting point."
+        )
+        notification = LockedRouteNotificationMessage(
+            session_id=session.session_id,
+            locked_route_id=locked.route_plan.id,
+            first_micro_instruction=first_instruction,
+            total_waypoints=len(locked.route_plan.waypoints),
+            estimated_duration_s=locked.route_plan.estimated_duration_s,
+        )
+
         print(f"{'='*70}")
         print(f"[RoutingAgent] === ROUTE REQUEST PIPELINE COMPLETE ===")
         print(f"{'='*70}\n")
 
-        logger.info("RoutingAgent: route choice prompt built", extra={"options": len(candidates)})
-        return prompt_msg
+        print(f"[RoutingAgent] CONSOLIDATED AGENT OUTPUTS:")
+        for i, r in enumerate(candidates, 1):
+            print(f"\n--- Route {i}: {r.label} ---")
+            print(f"  [DirectionFinderAgent] Distance: {r.distance_m:.0f} m, Waypoints: {len(r.waypoints)}")
+            print(f"  [AccessibilityAgent]   Score: {r.accessibility_score.composite_score:.4f}, Rank: {r.rank}")
+            print(f"                         Evidence: StepFree={r.accessibility_score.step_free}, Tactile={r.accessibility_score.tactile_paving}, Lighting={r.accessibility_score.lighting_quality.value}, Crowding={r.accessibility_score.crowding_estimate}, ObstructionRisk={r.accessibility_score.obstruction_risk}")
+            print(f"  [ETAAgent]             ETA: {ETAAgent.format_duration(r.estimated_duration_s)} ({r.estimated_duration_s}s)")
+            print(f"  [InstructionParsing]   {len(r.micro_instructions)} micro-instructions generated:")
+            for j, instr in enumerate(r.micro_instructions, 1):
+                print(f"    {j}. {instr}")
+        print(f"\n{'='*70}\n")
+
+        # --- POST-PIPELINE AUDIT ---
+        print(f"\n[RoutingAgent] POST-PIPELINE AUDIT: Prompting LLM for Audit...")
+        audit_system_prompt = "You are an accessibility navigation agent. Audit the route options presented to the user. Explain the instruction, ETA, and accessibility evidence for each route."
+        audit_info = ""
+        for i, r in enumerate(candidates):
+            audit_info += f"\nRoute {i+1}: {r.label} (score: {r.accessibility_score.composite_score:.4f}, ETA: {r.estimated_duration_s}s, instructions: {len(r.micro_instructions) or len(r.raw_instructions)})\n"
+            audit_info += f"Accessibility Evidence: step_free={r.accessibility_score.step_free}, tactile={r.accessibility_score.tactile_paving}, lighting={r.accessibility_score.lighting_quality.value}, crowding={r.accessibility_score.crowding_estimate}, obstruction={r.accessibility_score.obstruction_risk}\n"
+            
+        audit_user_prompt = (
+            f"User Profile: vision level = {profile.vision_level}, pace = {profile.preferred_pace_mps} m/s, "
+            f"prefers step-free = {profile.prefers_step_free}, prefers tactile = {profile.prefers_tactile_paving}.\n"
+            f"Route Options:\n{audit_info}\n"
+            f"Please provide the audit for each route."
+        )
+        try:
+            audit_explanation = await self._bedrock.invoke_model(audit_system_prompt, audit_user_prompt, model_tier="nova-pro")
+            print(f"\n[RoutingAgent] POST-PIPELINE AUDIT RESULT:\n{audit_explanation}\n")
+        except Exception as e:
+            print(f"\n[RoutingAgent] POST-PIPELINE AUDIT FAILED: {e}\n")
+        # --- END POST-PIPELINE AUDIT ---
+
+        logger.info("RoutingAgent: route auto-locked", extra={"locked_route_id": locked.route_plan.id})
+        return locked, notification
 
     async def handle_voice_selection(
         self, msg: VoiceRouteSelectionMessage
@@ -249,12 +305,20 @@ class RoutingAgent:
 
     async def _handle_obstruction(self, raw: dict) -> dict:
         msg = self._obstruction.parse(raw)
+        if msg.severity == "high":
+            return {"status": "received", "message_id": msg.message_id, "action": "replan_required"}
         return {"status": "received", "message_id": msg.message_id, "action": "no-op"}
 
     async def _handle_pace_update(self, raw: dict) -> dict:
         msg = PaceUpdateMessage.model_validate(raw)
-        logger.info("RoutingAgent: pace update (no-op)", extra={"pace_mps": msg.current_pace_mps})
-        return {"status": "received", "message_id": msg.message_id, "action": "no-op"}
+        logger.info("RoutingAgent: pace update", extra={"pace_mps": msg.current_pace_mps})
+        pace_pk, pace_sk = f"PACE#{msg.user_id}", "PACE#current"
+        await self._store.put(pace_pk, pace_sk, {
+            "average_pace_mps": msg.current_pace_mps,
+            "user_id": msg.user_id,
+            "source": "dynamodb",
+        })
+        return {"status": "received", "message_id": msg.message_id, "action": "persisted"}
 
     async def _handle_landmark_confirmation(self, raw: dict) -> dict:
         msg = LandmarkConfirmationMessage.model_validate(raw)
@@ -291,8 +355,22 @@ class RoutingAgent:
         except PydanticValidationError as exc:
             return {"status": "gate_rejected", "reason": str(exc)}
 
+        async def on_obstruction(guidance_text: str):
+            import subprocess
+            logger.info("RoutingAgent: Received obstruction event from VisionAgent.")
+            refined = await self._instruction_parser.parse_vision_instruction(guidance_text)
+            logger.info(f"RoutingAgent: Refined Instruction -> {refined}")
+            
+            # Generate TTS
+            audio_bytes, _ = self._voice.generate_tts_audio(refined)
+            if audio_bytes:
+                with open("temp_tts.mp3", "wb") as f:
+                    f.write(audio_bytes)
+                # Play audio locally for testing
+                subprocess.Popen(["afplay", "temp_tts.mp3"])
+
         try:
-            dispatched = await self._vision.dispatch_request(request)
+            dispatched = await self._vision.send(request, on_obstruction_callback=on_obstruction)
             return {"status": "dispatched" if dispatched else "unreachable", "message_id": request.message_id}
         except ProximityGateError as exc:
             return {"status": "gate_rejected", "reason": str(exc)}

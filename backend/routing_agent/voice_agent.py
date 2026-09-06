@@ -7,9 +7,13 @@ from __future__ import annotations
 import json
 import logging
 import re
+import boto3
 
 from backend.routing_agent.models import VoiceRouteSelectionMessage, RoutePlan
 from backend.routing_agent.bedrock_client import BedrockClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,7 @@ class VoiceAgent:
 
     def __init__(self, bedrock: BedrockClient) -> None:
         self._bedrock = bedrock
+        self._polly = boto3.client('polly', region_name='us-east-1')
 
     async def resolve(
         self,
@@ -88,6 +93,39 @@ class VoiceAgent:
         raise VoiceParseError(
             f"Could not resolve voice transcript to a route: '{msg.raw_voice_transcript}'"
         )
+
+    # ─── TTS Generation (Amazon Polly) ────────────────────────────────────────
+
+    def generate_tts_audio(self, text: str) -> tuple[bytes, list[dict]]:
+        """
+        Generates TTS audio and speech marks (for text highlighting) using Amazon Polly.
+        Returns a tuple: (mp3_audio_bytes, list_of_speech_mark_dicts)
+        """
+        logger.info("VoiceAgent: generating TTS audio and speech marks via Polly")
+        
+        # Request speech marks (JSON)
+        marks_response = self._polly.synthesize_speech(
+            Text=text,
+            OutputFormat='json',
+            SpeechMarkTypes=['word'],
+            VoiceId='Joanna'
+        )
+        marks_stream = marks_response.get('AudioStream')
+        speech_marks = []
+        if marks_stream:
+            for line in marks_stream.read().decode('utf-8').split('\n'):
+                if line.strip():
+                    speech_marks.append(json.loads(line))
+                    
+        # Request actual audio (MP3)
+        audio_response = self._polly.synthesize_speech(
+            Text=text,
+            OutputFormat='mp3',
+            VoiceId='Joanna'
+        )
+        audio_bytes = audio_response.get('AudioStream').read() if 'AudioStream' in audio_response else b''
+        
+        return audio_bytes, speech_marks
 
     # ─── Resolution strategies ────────────────────────────────────────────────
 

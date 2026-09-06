@@ -27,6 +27,9 @@ from backend.routing_agent.models import (
     MobilityProfile,
 )
 from backend.routing_agent.config import get_settings
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -142,24 +145,26 @@ class DirectionFinderAgent:
                 "Enable the Directions API."
             )
 
-        # Build origin/destination strings — prefer coords if available
-        origin = f"{origin_lat},{origin_lon}" if origin_lat and origin_lon else origin_label
-        destination = (
-            f"{destination_lat},{destination_lon}"
-            if destination_lat and destination_lon
-            else destination_label
-        )
+        # Geocode the labels if coordinates are not provided
+        if not origin_lat or not origin_lon:
+            origin_lat, origin_lon = await self._geocode_label(origin_label)
+        if not destination_lat or not destination_lon:
+            destination_lat, destination_lon = await self._geocode_label(destination_label)
+
+        # Build origin/destination strings using the coordinates
+        origin = f"{origin_lat},{origin_lon}"
+        destination = f"{destination_lat},{destination_lon}"
 
         params = {
             "origin": origin,
             "destination": destination,
-            "mode": "walking",
+            "mode": "transit",
             "alternatives": "true",      # Request multiple routes
             "key": self._maps_api_key,
         }
 
-        print(f"[DirectionFinderAgent] Calling Google Directions API...")
-        print(f"[DirectionFinderAgent] Origin: {origin} | Destination: {destination}")
+        print(f"[DirectionFinderAgent] Calling Google Directions API (mode=transit)...")
+        print(f"[DirectionFinderAgent] Origin: {origin_label} ({origin}) | Destination: {destination_label} ({destination})")
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.get(_GOOGLE_DIRECTIONS_URL, params=params)
@@ -187,21 +192,52 @@ class DirectionFinderAgent:
             step_waypoints = []
 
             for step_idx, step in enumerate(steps):
-                # Strip HTML from instructions
-                html_instr = step.get("html_instructions", "")
-                text_instr = self._strip_html(html_instr)
-                raw_instructions.append(text_instr)
+                travel_mode = step.get("travel_mode", "UNKNOWN")
+                
+                if travel_mode == "TRANSIT":
+                    transit_details = step.get("transit_details", {})
+                    line = transit_details.get("line", {}).get("name", "") or transit_details.get("line", {}).get("short_name", "")
+                    vehicle = transit_details.get("line", {}).get("vehicle", {}).get("name", "transit")
+                    num_stops = transit_details.get("num_stops", "")
+                    headsign = transit_details.get("headsign", "")
+                    boarding_stop = transit_details.get("departure_stop", {}).get("name", "unknown")
+                    alighting_stop = transit_details.get("arrival_stop", {}).get("name", "unknown")
+                    text_instr = f"[TRANSIT] Board {vehicle} {line} at {boarding_stop} towards {headsign} for {num_stops} stops. Alight at {alighting_stop}."
+                else:
+                    html_instr = step.get("html_instructions", "")
+                    text_instr = f"[WALKING] {self._strip_html(html_instr)}"
 
-                # Build waypoints from step start locations
-                start_loc = step.get("start_location", {})
-                distance_m = step.get("distance", {}).get("value", 0)
+                if "steps" in step:
+                    for sub_step in step["steps"]:
+                        sub_html = sub_step.get("html_instructions", "")
+                        sub_text = f"[{travel_mode}] {self._strip_html(sub_html)}"
+                        raw_instructions.append(sub_text)
+                        
+                        start_loc = sub_step.get("start_location", {})
+                        distance_m = sub_step.get("distance", {}).get("value", 0)
+                        duration_s = sub_step.get("duration", {}).get("value", 0)
+                        step_waypoints.append({
+                            "lat": start_loc.get("lat", 0),
+                            "lon": start_loc.get("lng", 0),
+                            "label": sub_text[:60] if sub_text else f"Step {len(step_waypoints) + 1}",
+                            "distance_to_next_m": float(distance_m),
+                            "duration_to_next_s": int(duration_s),
+                            "travel_mode_to_next": travel_mode,
+                        })
+                else:
+                    raw_instructions.append(text_instr)
+                    start_loc = step.get("start_location", {})
+                    distance_m = step.get("distance", {}).get("value", 0)
+                    duration_s = step.get("duration", {}).get("value", 0)
 
-                step_waypoints.append({
-                    "lat": start_loc.get("lat", 0),
-                    "lon": start_loc.get("lng", 0),
-                    "label": text_instr[:60] if text_instr else f"Step {step_idx + 1}",
-                    "distance_to_next_m": float(distance_m),
-                })
+                    step_waypoints.append({
+                        "lat": start_loc.get("lat", 0),
+                        "lon": start_loc.get("lng", 0),
+                        "label": text_instr[:60] if text_instr else f"Step {len(step_waypoints) + 1}",
+                        "distance_to_next_m": float(distance_m),
+                        "duration_to_next_s": int(duration_s),
+                        "travel_mode_to_next": travel_mode,
+                    })
 
             # Add the final destination as last waypoint
             end_loc = leg.get("end_location", {})
@@ -210,6 +246,8 @@ class DirectionFinderAgent:
                 "lon": end_loc.get("lng", 0),
                 "label": destination_label,
                 "distance_to_next_m": None,
+                "duration_to_next_s": None,
+                "travel_mode_to_next": None,
             })
 
             route_info = {
@@ -230,6 +268,26 @@ class DirectionFinderAgent:
             )
 
         return routes[:3]  # Cap at 3 routes
+
+    async def _geocode_label(self, label: str) -> tuple[float, float]:
+        """Convert a text label to lat/lon using Google Geocoding API."""
+        print(f"[DirectionFinderAgent] Geocoding label: {label}")
+        params = {
+            "address": label,
+            "key": self._maps_api_key,
+        }
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+        
+        if data.get("status") == "OK" and data.get("results"):
+            loc = data["results"][0]["geometry"]["location"]
+            return loc["lat"], loc["lng"]
+        
+        print(f"[DirectionFinderAgent] Geocoding failed for '{label}': {data.get('status')}")
+        raise RuntimeError(f"Could not geocode '{label}'. Please provide more specific input.")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # OPENSTREETMAP OVERPASS API
@@ -288,7 +346,10 @@ out body;
                 response = await client.post(
                     _OVERPASS_URL,
                     data={"data": query},
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "User-Agent": "SimplifyNext/1.0 (contact@simplifynext.com)"
+                    },
                 )
                 response.raise_for_status()
                 osm_data = response.json()
@@ -413,6 +474,8 @@ out body;
                     label=wp_data["label"],
                     fine_motor_required=False,
                     distance_to_next_m=wp_data.get("distance_to_next_m"),
+                    duration_to_next_s=wp_data.get("duration_to_next_s"),
+                    travel_mode_to_next=wp_data.get("travel_mode_to_next"),
                 )
             )
 
@@ -457,6 +520,7 @@ out body;
             accessibility_score=accessibility_score,
             estimated_duration_s=0,  # Filled by ETAAgent
             distance_m=google_route["distance_m"],
+            provider_duration_s=google_route["duration_s"],
             raw_instructions=google_route["raw_instructions"],
             micro_instructions=[],  # Filled by InstructionParsingAgent
             is_stub=False,  # This is REAL API data!

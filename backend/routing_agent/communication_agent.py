@@ -11,6 +11,9 @@ import httpx
 
 from backend.routing_agent.config import get_settings
 from backend.routing_agent.models import BaseMessage, StartTimerEventMessage, ObstructionReportMessage
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

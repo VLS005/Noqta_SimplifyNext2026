@@ -9,25 +9,46 @@ import logging
 
 from backend.routing_agent.models import RoutePlan, MobilityProfile
 from backend.routing_agent.bedrock_client import BedrockClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a navigation assistant for blind and low-vision users.
 Your task is to translate standard navigation instructions into concise micro-instructions.
+The route will contain both [WALKING] and [TRANSIT] segments.
 
 Rules:
-1. Each instruction must be 15 words or fewer.
-2. Never use cardinal directions (north, south, east, west, NE, SW, etc.) or measured distance (ex: 3 metres, 5 metres)
-3. Use sensory cues: tactile (feel the kerb), auditory (listen for traffic), proximity (around 15 steps ahead).
-4. Reference physical landmarks the user can touch or hear (e.g. "metal railing on your left").
-5. Ensure sensory cues are not vague: turn left when the vehicle noises increase (to describe exiting the mall for ex.).
+1. For [WALKING] segments, apply blind-friendly micro-instructions. Use sensory cues: tactile (feel the kerb), auditory (listen for traffic), proximity (around 15 steps ahead).
+2. For [TRANSIT] segments (e.g. taking a bus/subway), KEEP the instructions exactly as provided but format them nicely. Do not add tactile or auditory walking cues since the user is in a vehicle.
+3. Each [WALKING] instruction must be 15 words or fewer.
+4. Never use cardinal directions (north, south, east, west, NE, SW, etc.) or measured distance (ex: 3 metres, 5 metres).
+5. Reference physical landmarks the user can touch or hear.
 6. Write for text-to-speech — no symbols, no abbreviations, full words only.
 7. Return ONLY a JSON array of strings, one string per instruction. No other text.
 
+Example input:
+[WALKING] Walk straight
+[WALKING] Turn right at the crosswalk
+[TRANSIT] Take bus 10 towards City Center for 5 stops
 
 Example output:
-["Walk straight until you feel the raised tactile dots underfoot.", "Take a right turn in around 15 steps. Keep close to the wall on right to minimise injuries."]
+["Walk straight until you feel the raised tactile dots underfoot.", "Take a right turn in around 15 steps. Keep close to the wall on right to minimise injuries.", "Take bus 10 towards City Center for 5 stops."]
+"""
+
+_VISION_SYSTEM_PROMPT = """\
+You are an accessibility safety assistant for a blind user. 
+You will receive a raw, dynamically generated description of objects detected by the user's camera.
+Your task is to translate this raw description into a single, concise micro-instruction (under 15 words) suitable for real-time Text-To-Speech (TTS).
+
+Rules for Prioritization (Highest to Lowest):
+1. Overhead obstructions or major risks (e.g., branches, poles, trees, buildings).
+2. Small obstacles that are easy to trip over or miss.
+3. Standard obstacles like chairs, tables, or people.
+
+Return ONLY a plain text string with the safety instruction. Do not wrap in JSON. Do not include any extra commentary.
 """
 
 
@@ -61,6 +82,13 @@ class InstructionParsingAgent:
         raw_response = await self._bedrock.invoke_model(_SYSTEM_PROMPT, user_prompt)
         micro = self._parse_response(raw_response, route.raw_instructions)
 
+        aligned = []
+        for i, raw_instr in enumerate(route.raw_instructions):
+            if raw_instr.startswith("[TRANSIT]"):
+                aligned.append(raw_instr)
+            else:
+                aligned.append(micro[i] if i < len(micro) else raw_instr)
+        micro = aligned
         print(
             f"[InstructionParsingAgent] Route '{route.label}' | "
             f"raw_instructions={len(route.raw_instructions)} | "
@@ -79,7 +107,22 @@ class InstructionParsingAgent:
         self, routes: list[RoutePlan], profile: MobilityProfile
     ) -> list[RoutePlan]:
         """Translate micro-instructions for all candidate routes."""
-        return [await self.translate(r, profile) for r in routes]
+        import asyncio
+        return list(await asyncio.gather(*(self.translate(r, profile) for r in routes)))
+
+    async def parse_vision_instruction(self, raw_guidance_text: str) -> str:
+        """
+        Translates raw geometric guidance text (from VisionAgent) into 
+        a concise TTS safety command using Bedrock.
+        """
+        user_prompt = f"Raw camera detection data:\n{raw_guidance_text}\n\nGenerate the safety instruction."
+        try:
+            response = await self._bedrock.invoke_model(_VISION_SYSTEM_PROMPT, user_prompt)
+            # Clean up quotes if LLM wraps the text
+            return response.strip(' "\'')
+        except Exception as e:
+            logger.error(f"InstructionParsingAgent: vision parse failed: {e}")
+            return raw_guidance_text
 
     # ─── Private helpers ──────────────────────────────────────────────────────
 

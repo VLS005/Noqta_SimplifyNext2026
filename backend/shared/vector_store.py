@@ -35,37 +35,19 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger(__name__)
 
 
-# ─── Configuration (all values from env vars) ─────────────────────────────────
+# ─── Configuration ──────────────────────────────────────────────────────────────
 
-class StoreBackend(str, Enum):
-    DYNAMODB = "dynamodb"
-    S3_VECTORS = "s3_vectors"
-
-
-# TODO: Replace placeholder values with real credentials via IAM role or Secrets Manager
-_AWS_REGION: str = os.getenv("AWS_REGION", "ap-southeast-1")
-_DYNAMODB_TABLE_NAME: str = os.getenv("DYNAMODB_TABLE_NAME", "simplify-next-store")
-_DYNAMODB_ENDPOINT_URL: str | None = os.getenv("DYNAMODB_ENDPOINT_URL")  # None = real AWS
-_S3_VECTORS_BUCKET: str = os.getenv("S3_VECTORS_BUCKET", "simplify-next-vectors")  # TODO
-_S3_VECTORS_INDEX: str = os.getenv("S3_VECTORS_INDEX", "simplify-next-index")       # TODO
-_STORE_BACKEND: StoreBackend = StoreBackend(
-    os.getenv("STORE_BACKEND", StoreBackend.DYNAMODB.value)
-)
-
+from backend.routing_agent.config import get_settings
 
 # ─── VectorStore ──────────────────────────────────────────────────────────────
 
 class VectorStore:
     """
-    Centralised key-value / vector store shared across all agents.
+    Centralised key-value store shared across all agents.
 
     DynamoDB (primary):
         - Single-table design; PK + SK pattern supports all entity types.
         - put / get / delete / query operations.
-
-    S3 Vectors (stub):
-        - vector_upsert / vector_search are placeholders.
-        - TODO: implement when boto3 adds first-class S3 Vectors support.
 
     If DynamoDB is unavailable (e.g. no credentials in dev), operations
     degrade gracefully and log warnings — the app continues to run in
@@ -73,19 +55,10 @@ class VectorStore:
     """
 
     def __init__(self) -> None:
-        self._backend = _STORE_BACKEND
+        self._settings = get_settings()
         self._table = None
-        self._s3v_client = None
         self._fallback: dict[str, dict] = {}   # in-process fallback when AWS is unreachable
-        self._init_clients()
-
-    # ─── Initialisation ───────────────────────────────────────────────────────
-
-    def _init_clients(self) -> None:
-        if self._backend == StoreBackend.DYNAMODB:
-            self._init_dynamodb()
-        elif self._backend == StoreBackend.S3_VECTORS:
-            self._init_s3_vectors()
+        self._init_dynamodb()
 
     def _init_dynamodb(self) -> None:
         """
@@ -95,22 +68,23 @@ class VectorStore:
         """
         try:
             kwargs: dict[str, Any] = {
-                "region_name": _AWS_REGION,
+                "region_name": self._settings.aws_region,
             }
-            if _DYNAMODB_ENDPOINT_URL:
-                kwargs["endpoint_url"] = _DYNAMODB_ENDPOINT_URL
-            # TODO: remove explicit key args — use IAM role in production
-            if os.getenv("AWS_ACCESS_KEY_ID"):
-                kwargs["aws_access_key_id"] = os.getenv("AWS_ACCESS_KEY_ID")
-                kwargs["aws_secret_access_key"] = os.getenv("AWS_SECRET_ACCESS_KEY")
+            if self._settings.dynamodb_endpoint_url:
+                kwargs["endpoint_url"] = self._settings.dynamodb_endpoint_url
+            
+            # Use specific keys if defined, otherwise boto3 falls back to env vars/IAM roles
+            if self._settings.aws_access_key_id and self._settings.aws_secret_access_key:
+                kwargs["aws_access_key_id"] = self._settings.aws_access_key_id
+                kwargs["aws_secret_access_key"] = self._settings.aws_secret_access_key
 
             dynamodb = boto3.resource("dynamodb", **kwargs)
-            self._table = dynamodb.Table(_DYNAMODB_TABLE_NAME)
+            self._table = dynamodb.Table(self._settings.dynamodb_table_name)
             # Trigger a lightweight call to validate connectivity
             self._table.table_status  # raises if table doesn't exist / no access
             logger.info(
                 "VectorStore: DynamoDB connected",
-                extra={"table": _DYNAMODB_TABLE_NAME, "endpoint": _DYNAMODB_ENDPOINT_URL},
+                extra={"table": self._settings.dynamodb_table_name, "endpoint": self._settings.dynamodb_endpoint_url},
             )
         except Exception as exc:
             logger.warning(
@@ -118,21 +92,6 @@ class VectorStore:
                 f"Reason: {exc}"
             )
             self._table = None
-
-    def _init_s3_vectors(self) -> None:
-        """
-        TODO: Initialise S3 Vectors client when AWS SDK support is available.
-        As of 2025, use the REST API directly or wait for boto3 native support.
-        """
-        logger.warning(
-            "VectorStore: S3 Vectors backend selected but SDK is not yet implemented. "
-            "Falling back to DynamoDB init."
-        )
-        # Attempt DynamoDB as fallback until S3 Vectors SDK ships
-        self._backend = StoreBackend.DYNAMODB
-        self._init_dynamodb()
-        # TODO: replace with:
-        # self._s3v_client = boto3.client("s3vectors", region_name=_AWS_REGION)
 
     # ─── DynamoDB CRUD ────────────────────────────────────────────────────────
 
@@ -226,42 +185,7 @@ class VectorStore:
             logger.error(f"VectorStore.update failed: {exc}", extra={"pk": pk, "sk": sk})
             return False
 
-    # ─── S3 Vectors (placeholder) ─────────────────────────────────────────────
 
-    async def vector_upsert(
-        self,
-        index: str,
-        item_id: str,
-        vector: list[float],
-        metadata: dict[str, Any],
-    ) -> bool:
-        """
-        Upsert a vector embedding into an S3 Vectors index.
-        TODO: implement when AWS S3 Vectors boto3 client is available.
-        """
-        logger.warning(
-            "VectorStore.vector_upsert: S3 Vectors not implemented — placeholder only",
-            extra={"index": index, "id": item_id},
-        )
-        # TODO: self._s3v_client.put_vectors(bucket=_S3_VECTORS_BUCKET, index=index, ...)
-        return False
-
-    async def vector_search(
-        self,
-        index: str,
-        query_vector: list[float],
-        top_k: int = 5,
-    ) -> list[dict[str, Any]]:
-        """
-        Search for semantically similar items in an S3 Vectors index.
-        TODO: implement when AWS S3 Vectors boto3 client is available.
-        """
-        logger.warning(
-            "VectorStore.vector_search: S3 Vectors not implemented — placeholder only",
-            extra={"index": index, "top_k": top_k},
-        )
-        # TODO: self._s3v_client.query_vectors(bucket=_S3_VECTORS_BUCKET, index=index, ...)
-        return []
 
     # ─── Key helpers ──────────────────────────────────────────────────────────
 

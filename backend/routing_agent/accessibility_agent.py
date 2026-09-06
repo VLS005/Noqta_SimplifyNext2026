@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 
+import json
 from backend.routing_agent.models import (
     AccessibilityScore,
     LightingQuality,
@@ -13,6 +14,10 @@ from backend.routing_agent.models import (
     RoutePlan,
     MobilityProfile,
 )
+from backend.routing_agent.bedrock_client import BedrockClient
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +33,18 @@ class AccessibilityAgent:
     """
     Computes and injects the composite_score into each RoutePlan's AccessibilityScore.
     Scores are personalised using the user's MobilityProfile.
-    Weights are derived dynamically from profile flags (not hardcoded).
+    Weights are derived dynamically from profile flags via an LLM.
     """
 
-    def score(self, route: RoutePlan, profile: MobilityProfile) -> RoutePlan:
+    def __init__(self, bedrock: BedrockClient) -> None:
+        self._bedrock = bedrock
+
+    async def score(self, route: RoutePlan, profile: MobilityProfile) -> RoutePlan:
         """
         Compute the accessibility composite score for one route.
         Returns the same RoutePlan with accessibility_score.composite_score populated.
         """
-        weights = self._compute_weights_from_profile(profile)
+        weights = await self._compute_weights_from_profile(profile)
         print(
             f"[AccessibilityAgent] Computed weights from profile: "
             f"step_free={weights.step_free}, tactile={weights.tactile}, "
@@ -69,11 +77,12 @@ class AccessibilityAgent:
         )
         return updated_route
 
-    def score_all(
+    async def score_all(
         self, routes: list[RoutePlan], profile: MobilityProfile
     ) -> list[RoutePlan]:
         """Score all candidates, sort by composite_score descending, and assign ranks."""
-        scored = [self.score(r, profile) for r in routes]
+        import asyncio
+        scored = list(await asyncio.gather(*(self.score(r, profile) for r in routes)))
         scored_sorted = sorted(
             scored, key=lambda r: r.accessibility_score.composite_score, reverse=True
         )
@@ -82,55 +91,64 @@ class AccessibilityAgent:
         for i, r in enumerate(scored_sorted, start=1):
             r_ranked = r.model_copy(update={"rank": i})
             ranked.append(r_ranked)
-            print(
-                f"[AccessibilityAgent] RANKED: Route '{r_ranked.label}' -> "
-                f"rank={r_ranked.rank}, composite_score={r_ranked.accessibility_score.composite_score}"
-            )
+            
         return ranked
 
     # ─── Private helpers ──────────────────────────────────────────────────────
 
-    @staticmethod
-    def _compute_weights_from_profile(profile: MobilityProfile) -> MobilityWeights:
+    async def _compute_weights_from_profile(self, profile: MobilityProfile) -> MobilityWeights:
         """
         Compute accessibility scoring weights dynamically from the user's
-        MobilityProfile flags. If the profile has explicit mobility_weights
-        set, use those directly. Otherwise derive from preferences.
+        MobilityProfile flags using the LLM.
         """
         if profile.mobility_weights is not None:
             return profile.mobility_weights
 
-        # Base weights
-        w_step_free = 0.25
-        w_tactile = 0.15
-        w_lighting = 0.15
-        w_crowding = 0.15
-        w_obstruction = 0.10
-
-        # Boost based on user preferences
-        if profile.prefers_step_free:
-            w_step_free += 0.10
-        if profile.prefers_tactile_paving:
-            w_tactile += 0.05
-        if profile.vision_level == "blind":
-            # Blind users: much higher weight on tactile, lighting, step-free
-            w_tactile += 0.05
-            w_lighting += 0.05
-            w_step_free += 0.05
-        if profile.avoids_crowded_areas:
-            w_crowding += 0.10
-        if profile.preferred_lighting == "bright":
-            w_lighting += 0.05
-
-        # Normalise to sum to 1.0
-        total = w_step_free + w_tactile + w_lighting + w_crowding + w_obstruction
-        return MobilityWeights(
-            step_free=round(w_step_free / total, 4),
-            tactile=round(w_tactile / total, 4),
-            lighting=round(w_lighting / total, 4),
-            crowding=round(w_crowding / total, 4),
-            obstruction=round(w_obstruction / total, 4),
+        system_prompt = (
+            "You are an expert accessibility AI. Given a user's mobility profile, "
+            "determine the optimal weights (summing to exactly 1.0) for 5 accessibility factors: "
+            "step_free, tactile, lighting, crowding, obstruction.\n"
+            "Return ONLY a valid JSON object with these 5 keys and float values, e.g.\n"
+            "{\"step_free\": 0.3, \"tactile\": 0.2, \"lighting\": 0.2, \"crowding\": 0.15, \"obstruction\": 0.15}"
         )
+        user_prompt = (
+            f"User profile: vision_level={profile.vision_level}, "
+            f"prefers_step_free={profile.prefers_step_free}, prefers_tactile_paving={profile.prefers_tactile_paving}, "
+            f"avoids_crowded_areas={profile.avoids_crowded_areas}, preferred_lighting={profile.preferred_lighting}"
+        )
+
+        try:
+            raw_response = await self._bedrock.invoke_model(system_prompt, user_prompt, model_tier="nova-lite")
+            
+            # Extract JSON block
+            text = raw_response
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            
+            data = json.loads(text.strip())
+            
+            w_step_free = float(data.get("step_free", 0.25))
+            w_tactile = float(data.get("tactile", 0.15))
+            w_lighting = float(data.get("lighting", 0.15))
+            w_crowding = float(data.get("crowding", 0.15))
+            w_obstruction = float(data.get("obstruction", 0.10))
+            
+            total = w_step_free + w_tactile + w_lighting + w_crowding + w_obstruction
+            if total == 0:
+                total = 1.0
+                
+            return MobilityWeights(
+                step_free=round(w_step_free / total, 4),
+                tactile=round(w_tactile / total, 4),
+                lighting=round(w_lighting / total, 4),
+                crowding=round(w_crowding / total, 4),
+                obstruction=round(w_obstruction / total, 4),
+            )
+        except Exception as e:
+            logger.warning(f"AccessibilityAgent: failed to get weights from LLM ({e}). Using defaults.")
+            return MobilityWeights()
 
     @staticmethod
     def _compute_raw(acc: AccessibilityScore, weights: MobilityWeights) -> float:
