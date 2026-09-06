@@ -12,6 +12,7 @@ build/
 .venv/
 venv/
 env/
+.simnex26
 
 # ─── Environment variables (NEVER commit credentials) ────────────────
 .env
