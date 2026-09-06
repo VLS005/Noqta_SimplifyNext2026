@@ -76,6 +76,43 @@ class RoutingAgent:
 
         logger.info("RoutingAgent: initialised with all sub-agents")
 
+    # ─── Live Navigation Simulator ────────────────────────────────────────────
+
+    async def _simulate_live_navigation(self, route_plan: RoutePlan):
+        """Simulates walking a route by playing instructions sequentially."""
+        import asyncio
+        logger.info("RoutingAgent: Starting Live Navigation Simulation...")
+        
+        # Initialize pause event for interruption
+        self._nav_pause_event = asyncio.Event()
+        self._nav_pause_event.set()
+        self._nav_player = None
+        
+        instructions = route_plan.micro_instructions if route_plan.micro_instructions else route_plan.raw_instructions
+        
+        for i, instruction in enumerate(instructions):
+            # Wait if navigation is paused
+            await self._nav_pause_event.wait()
+            
+            logger.info(f"RoutingAgent: [SIMULATOR] Step {i+1}/{len(instructions)}: {instruction}")
+            audio_bytes, _ = self._voice.generate_tts_audio(instruction)
+            if audio_bytes:
+                with open("temp_nav_tts.mp3", "wb") as f:
+                    f.write(audio_bytes)
+                self._nav_player = await asyncio.create_subprocess_exec("afplay", "temp_nav_tts.mp3")
+            
+            # Wait 5 seconds to simulate walking to the next waypoint
+            # Loop quickly so we can break early if interrupted
+            for _ in range(50):
+                await asyncio.sleep(0.1)
+                if not self._nav_pause_event.is_set():
+                    break
+            
+            # If we were paused during walking, wait until we resume before going to next step
+            await self._nav_pause_event.wait()
+            
+        logger.info("RoutingAgent: Live Navigation Simulation Complete.")
+
     # ══════════════════════════════════════════════════════════════════════════
     # SESSION MANAGEMENT
     # ══════════════════════════════════════════════════════════════════════════
@@ -241,6 +278,10 @@ class RoutingAgent:
         except Exception as e:
             print(f"\n[RoutingAgent] POST-PIPELINE AUDIT FAILED: {e}\n")
         # --- END POST-PIPELINE AUDIT ---
+        
+        # Start background live navigation simulation
+        import asyncio
+        asyncio.create_task(self._simulate_live_navigation(locked.route_plan))
 
         logger.info("RoutingAgent: route auto-locked", extra={"locked_route_id": locked.route_plan.id})
         return locked, notification
@@ -283,6 +324,10 @@ class RoutingAgent:
             total_waypoints=len(locked.route_plan.waypoints),
             estimated_duration_s=locked.route_plan.estimated_duration_s,
         )
+
+        import asyncio
+        asyncio.create_task(self._simulate_live_navigation(locked.route_plan))
+
         return locked, notification
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -356,8 +401,24 @@ class RoutingAgent:
             return {"status": "gate_rejected", "reason": str(exc)}
 
         async def on_obstruction(guidance_text: str):
-            import subprocess
+            import asyncio
             logger.info("RoutingAgent: Received obstruction event from VisionAgent.")
+            
+            # 1. Pause navigation simulator
+            if hasattr(self, '_nav_pause_event'):
+                self._nav_pause_event.clear()
+            
+            # 2. Stop current navigation audio if playing
+            if hasattr(self, '_nav_player') and self._nav_player:
+                try:
+                    self._nav_player.terminate()
+                except ProcessLookupError:
+                    pass
+                    
+            # 3. Play a ping/haptic alert immediately
+            ping_proc = await asyncio.create_subprocess_exec("afplay", "/System/Library/Sounds/Glass.aiff")
+            await ping_proc.wait()
+            
             refined = await self._instruction_parser.parse_vision_instruction(guidance_text)
             logger.info(f"RoutingAgent: Refined Instruction -> {refined}")
             
@@ -366,8 +427,13 @@ class RoutingAgent:
             if audio_bytes:
                 with open("temp_tts.mp3", "wb") as f:
                     f.write(audio_bytes)
-                # Play audio locally for testing
-                subprocess.Popen(["afplay", "temp_tts.mp3"])
+                # Play audio locally for testing and wait for it to finish
+                warn_proc = await asyncio.create_subprocess_exec("afplay", "temp_tts.mp3")
+                await warn_proc.wait()
+                
+            # 4. Resume navigation
+            if hasattr(self, '_nav_pause_event'):
+                self._nav_pause_event.set()
 
         try:
             dispatched = await self._vision.send(request, on_obstruction_callback=on_obstruction)

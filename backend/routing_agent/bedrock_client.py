@@ -86,7 +86,7 @@ class BedrockClient:
         except Exception as exc:
             logger.warning(f"BedrockClient: failed to init Gemini client. Reason: {exc}")
 
-    async def invoke_model(self, system_prompt: str, user_prompt: str, model_tier: str = "nova-lite") -> str:
+    async def invoke_model(self, system_prompt: str, user_prompt: str, model_tier: str = "nova-lite", image_bytes: bytes = None) -> str:
         """
         Call LLM with fallback logic.
         Tiers:
@@ -106,7 +106,7 @@ class BedrockClient:
         # Attempt 1: Requested Bedrock Model
         if self._bedrock_client:
             try:
-                response_text = self._invoke_bedrock_converse(model_id, system_prompt, user_prompt)
+                response_text = self._invoke_bedrock_converse(model_id, system_prompt, user_prompt, image_bytes)
                 print(f"[BedrockClient] AWS {model_id} response received ({len(response_text)} chars)")
                 return response_text
             except Exception as e:
@@ -121,7 +121,7 @@ class BedrockClient:
                     # Attempt 2: Fallback to Sonnet (if credits/quotas for Nova are out)
                     try:
                         fallback_model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-                        response_text = self._invoke_bedrock_converse(fallback_model, system_prompt, user_prompt)
+                        response_text = self._invoke_bedrock_converse(fallback_model, system_prompt, user_prompt, image_bytes)
                         print(f"[BedrockClient] AWS {fallback_model} fallback response received ({len(response_text)} chars)")
                         return response_text
                     except Exception as e2:
@@ -134,9 +134,14 @@ class BedrockClient:
         # Attempt 3: Fallback to Gemini
         if self._gemini_client:
             try:
+                contents = []
+                if image_bytes:
+                    contents.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+                contents.append(user_prompt)
+                
                 response = await self._gemini_client.aio.models.generate_content(
                     model=self._gemini_model_id,
-                    contents=user_prompt,
+                    contents=contents,
                     config=types.GenerateContentConfig(
                         system_instruction=system_prompt,
                         max_output_tokens=2048,
@@ -157,12 +162,22 @@ class BedrockClient:
         print(f"[BedrockClient] ERROR: {error_msg}")
         return f"ERROR: {error_msg}"
 
-    def _invoke_bedrock_converse(self, model_id: str, system_prompt: str, user_prompt: str) -> str:
+    def _invoke_bedrock_converse(self, model_id: str, system_prompt: str, user_prompt: str, image_bytes: bytes = None) -> str:
         """Helper to invoke Bedrock using the unified Converse API."""
+        content = []
+        if image_bytes:
+            content.append({
+                "image": {
+                    "format": "jpeg",
+                    "source": {"bytes": image_bytes}
+                }
+            })
+        content.append({"text": user_prompt})
+
         response = self._bedrock_client.converse(
             modelId=model_id,
             system=[{"text": system_prompt}],
-            messages=[{"role": "user", "content": [{"text": user_prompt}]}],
+            messages=[{"role": "user", "content": content}],
             inferenceConfig={"maxTokens": 2048}
         )
         return response["output"]["message"]["content"][0]["text"]

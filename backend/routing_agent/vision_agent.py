@@ -41,8 +41,10 @@ class VisionAgent:
     """
 
     def __init__(self):
+        from backend.routing_agent.bedrock_client import BedrockClient
         # Initialize the AWS Rekognition Client (uses credentials from env/aws config)
         self.rekognition_client = boto3.client('rekognition', region_name='us-east-1')
+        self._bedrock = BedrockClient()
         
         # Budget Safeguard Tracking ($10 budget / $0.001 per call = 10,000 max calls)
         self.api_call_count = 0
@@ -233,7 +235,21 @@ class VisionAgent:
                             if last_labels:
                                 guidance_text = self.sectorize_and_guide(last_labels)
                                 if "completely clear" not in guidance_text and on_obstruction_callback:
-                                    asyncio.create_task(on_obstruction_callback(guidance_text))
+                                    # Layer 2: Multimodal analysis
+                                    system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward."
+                                    user_prompt = f"Rekognition Labels: {last_labels}\n\nWhat are the hazards?"
+                                    try:
+                                        deep_context = await self._bedrock.invoke_model(
+                                            system_prompt=system_prompt,
+                                            user_prompt=user_prompt,
+                                            model_tier="nova-pro",
+                                            image_bytes=buffer.tobytes()
+                                        )
+                                        # Pass the rich multimodal response to the callback (Layer 3)
+                                        asyncio.create_task(on_obstruction_callback(deep_context))
+                                    except Exception as bedrock_err:
+                                        logger.error(f"VisionAgent: Nova Pro failed, falling back to basic guidance: {bedrock_err}")
+                                        asyncio.create_task(on_obstruction_callback(guidance_text))
                         except Exception as e:
                             logger.error(f"Rekognition error: {e}")
 
