@@ -117,6 +117,7 @@ app.add_middleware(
 
 
 class RouteRequestReq(BaseModel):
+    session_id: str
     origin_label: str
     destination_label: str
     user_id: str = "anonymous"
@@ -150,8 +151,7 @@ async def health() -> dict:
 async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
     """Triggers the full routing pipeline and returns route options."""
     from backend.routing_agent.models import RouteRequestMessage
-    import uuid
-    session_id = str(uuid.uuid4())
+    session_id = body.session_id
     print(f"\n[API] POST /api/route-request")
     print(f"[API] Origin: {body.origin_label} | Destination: {body.destination_label}")
     print(f"[API] User: {body.user_id} | Session: {session_id}")
@@ -162,7 +162,11 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
             origin_lat=body.origin_lat, origin_lon=body.origin_lon,
             destination_lat=body.destination_lat, destination_lon=body.destination_lon,
         )
-        locked, notification = await agent.handle_route_request(msg)
+
+        async def _progress(event_name: str, data: dict):
+            await ws_manager.broadcast(session_id, {"event": event_name, "data": data})
+
+        locked, notification = await agent.handle_route_request(msg, progress_callback=_progress)
         result = {
             "status": "locked",
             "session_id": session_id,

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Wayfinder</title>
+    <title>Noqta</title>
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -166,7 +166,7 @@
         function renderHome() {
             return `
                 <div class="flex flex-col gap-6 w-full">
-                    <h1 class="text-h1 mt-4 text-primary">Wayfinder</h1>
+                    <h1 class="text-h1 mt-4 text-primary">Noqta</h1>
                     
                     <div class="flex flex-col gap-3 w-full">
                         <div class="relative w-full flex items-center">
@@ -846,6 +846,7 @@
                 const videoElement = document.getElementById('camera-feed');
                 if (videoElement) {
                     videoElement.srcObject = stream;
+                    videoElement.play().catch(e => console.warn('Video play blocked:', e));
                 }
             } catch (err) {
                 console.error("Camera access denied or unavailable", err);
