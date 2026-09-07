@@ -502,7 +502,7 @@
 
         async function checkBusStatus() {
             try {
-                const response = await fetch(`http://${API_HOSTNAME}:8002/agent/check-bus`, {
+                const response = await fetch(`http://${API_HOSTNAME}:8001/agent/check-bus`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -753,7 +753,7 @@
             const originalText = btn.innerHTML;
             btn.innerHTML = 'Syncing...';
             try {
-                await fetch(`http://${API_HOSTNAME}:8002/preferences`, {
+                await fetch(`http://${API_HOSTNAME}:8001/preferences`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -883,8 +883,8 @@
             else if (page === 'summary') html = renderSummary(context || currentDestination);
             else if (page === 'navigating') {
                 html = renderNavigating(context || currentDestination);
+                startCamera(); // Must be called synchronously to preserve user gesture
                 setTimeout(() => {
-                    startCamera();
                     startKaraoke();
                     
                     // Auto-trigger vision agent for this demo session
