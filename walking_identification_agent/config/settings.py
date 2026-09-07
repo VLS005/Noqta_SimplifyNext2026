@@ -46,3 +46,13 @@ class AgentConfig:
     # many seconds, so the user isn't buzzed/prompted every single tick while
     # the underlying condition persists.
     alert_cooldown_sec: float = field(default_factory=lambda: _env_float("ALERT_COOLDOWN_SEC", 30.0))
+
+    # -- Placeholder endpoint control -----------------------------------
+    # bad_weather has no real Routing Agent endpoint yet (see
+    # api_schemas/inbound_weather.py) - sending it will currently get a
+    # real HTTP 400 back from their server. Default OFF so a live demo
+    # never shows an unexplained "FAILED" line unless someone deliberately
+    # opts in (e.g. to demonstrate the gap to the team, or after the
+    # Routing Agent owner adds real support). When False, bad_weather
+    # behaves exactly like disoriented: local-log only, no HTTP attempt.
+    attempt_weather_placeholder: bool = False

@@ -40,6 +40,9 @@ def demo_sensor_stream():
 if __name__ == "__main__":
     config = AgentConfig(poll_interval_sec=0.1, alert_cooldown_sec=3.0)  # sped up for demo
     agent = StateSafetyAgent(config=config, baseline_pace_spm=95)
-    agent.start_journey()
+    # In production this session_id comes from the Routing Agent's own
+    # POST /api/route-request response - hardcoded here only for the
+    # standalone demo, since this script doesn't call that endpoint.
+    agent.start_journey(session_id="demo-session-001", waypoint_id="wp-1")
     agent.run(demo_sensor_stream())
     agent.stop_journey()
