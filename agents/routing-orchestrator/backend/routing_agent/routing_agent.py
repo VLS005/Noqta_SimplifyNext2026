@@ -78,10 +78,10 @@ class RoutingAgent:
 
     # ─── Live Navigation Simulator ────────────────────────────────────────────
 
-    async def _simulate_live_navigation(self, route_plan: RoutePlan):
-        """Simulates walking a route by playing instructions sequentially."""
+    async def _simulate_live_navigation(self, route_plan: RoutePlan, progress_callback=None):
+        """Simulate walking the route step-by-step for the demo."""
         import asyncio
-        logger.info("RoutingAgent: Starting Live Navigation Simulation...")
+        logger.info("RoutingAgent: Starting live navigation simulation...")
         
         # Initialize pause event for interruption
         self._nav_pause_event = asyncio.Event()
@@ -95,11 +95,17 @@ class RoutingAgent:
             await self._nav_pause_event.wait()
             
             logger.info(f"RoutingAgent: [SIMULATOR] Step {i+1}/{len(instructions)}: {instruction}")
+            if progress_callback:
+                await progress_callback("instruction_update", {"instruction": instruction})
+            
             audio_bytes, _ = self._voice.generate_tts_audio(instruction)
             if audio_bytes:
-                with open("temp_nav_tts.mp3", "wb") as f:
+                import os
+                import tempfile
+                tts_path = os.path.join(tempfile.gettempdir(), "temp_nav_tts.mp3")
+                with open(tts_path, "wb") as f:
                     f.write(audio_bytes)
-                self._nav_player = await asyncio.create_subprocess_exec("afplay", "temp_nav_tts.mp3")
+                self._nav_player = await asyncio.create_subprocess_exec("afplay", tts_path)
             
             # Wait 5 seconds to simulate walking to the next waypoint
             # Loop quickly so we can break early if interrupted
@@ -119,9 +125,36 @@ class RoutingAgent:
 
     async def create_session(self, user_id: str, profile: MobilityProfile | None = None) -> UserSession:
         """Create and persist a new navigation session for a user."""
+        
+        # 1. Fetch user preferences from DynamoDB if no profile was provided
+        if profile is None:
+            try:
+                pk = f"MOBILITY_PREFERENCES#{user_id}"
+                sk = "MOBILITY_PREFERENCES#current"
+                user_item = await self._store.get(pk, sk)
+                
+                if user_item:
+                    # Map the DynamoDB fields to our MobilityProfile model
+                    # Note: DynamoDB strings need to be parsed to proper types
+                    step_free_str = str(user_item.get("Step_Free", "True")).lower()
+                    prefers_step_free = step_free_str == "true"
+                    
+                    profile = MobilityProfile(
+                        vision_level=user_item.get("Vision_Level", "blind").lower(),
+                        prefers_step_free=prefers_step_free,
+                        # pace is fetched dynamically in ETAAgent, but we can set a default here
+                        preferred_pace_mps=0.8,
+                    )
+                    logger.info(f"Loaded MobilityProfile from DynamoDB for {user_id}")
+                else:
+                    profile = MobilityProfile()
+            except Exception as e:
+                logger.warning(f"Failed to fetch MobilityProfile from DynamoDB for {user_id}: {e}")
+                profile = MobilityProfile()
+
         session = UserSession(
             user_id=user_id,
-            profile=profile or MobilityProfile(),
+            profile=profile,
         )
         pk, sk = VectorStore.session_keys(user_id, session.session_id)
         await self._store.put(pk, sk, {
@@ -158,7 +191,7 @@ class RoutingAgent:
     # CORE ROUTING PIPELINE
     # ══════════════════════════════════════════════════════════════════════════
 
-    async def handle_route_request(self, msg: RouteRequestMessage) -> RouteChoicePromptMessage:
+    async def handle_route_request(self, msg: RouteRequestMessage, progress_callback=None) -> tuple[LockedRoute, LockedRouteNotificationMessage]:
         """
         Full route-planning pipeline:
         1. Get/create session
@@ -197,16 +230,64 @@ class RoutingAgent:
             destination_lon=msg.destination_lon,
         )
         print(f"[RoutingAgent] Step 2 — DirectionFinderAgent returned {len(candidates)} candidates")
+        
+        # Gemini summary for each route (using force_gemini=True)
+        summaries = []
+        for i, c in enumerate(candidates):
+            prompt = (
+                f"Summarize this route. Label: {c.label}. Waypoints: {len(c.waypoints)}. "
+                "Format strictly like: [Starting Location] --> [Transit/Midpoint] --> [Endpoint]. "
+                "For the Starting Location use a geocode label if available. For Transit/Midpoint, extract a meaningful instruction. "
+                "Example: [SMU Connexion] --> [Walk via Victoria St] --> [Plaza Singapura]. Return ONLY the formatted string."
+            )
+            try:
+                summary = await self._bedrock.invoke_model(
+                    "You are a helpful transit summarizer.", 
+                    prompt, 
+                    model_tier="nova-lite",
+                    force_gemini=True
+                )
+                summaries.append(summary.strip())
+            except Exception as e:
+                logger.error(f"Failed to generate summary for route {i}: {e}")
+                summaries.append("[Starting Location] --> [Midpoint] --> [Endpoint]")
+        
+        if progress_callback:
+            routes_data = [{"id": c.id, "label": c.label, "distance_m": c.distance_m, "summary": summaries[i]} for i, c in enumerate(candidates)]
+            await progress_callback("candidates_generated", {"routes": routes_data})
 
         # Step 3 — accessibility scoring (dynamic weights from profile)
         print(f"\n[RoutingAgent] Step 3 — Calling AccessibilityAgent (dynamic weights)...")
         candidates = await self._accessibility.score_all(candidates, profile)
         print(f"[RoutingAgent] Step 3 — AccessibilityAgent scored and ranked {len(candidates)} candidates")
+        
+        if progress_callback:
+            acc_data = []
+            for c in candidates:
+                acc_data.append({
+                    "id": c.id,
+                    "score": c.accessibility_score.composite_score,
+                    "tactile_paving": c.accessibility_score.tactile_paving,
+                    "step_free": c.accessibility_score.step_free,
+                    "lighting": c.accessibility_score.lighting_quality.value,
+                    "obstruction_risk": c.accessibility_score.obstruction_risk
+                })
+            await progress_callback("accessibility_scored", {"routes": acc_data})
 
         # Step 4 — personalised ETA (with DynamoDB pace lookup)
         print(f"\n[RoutingAgent] Step 4 — Calling ETAAgent (DynamoDB pace lookup)...")
         candidates = await self._eta.estimate_all(candidates, profile, user_id=msg.user_id)
         print(f"[RoutingAgent] Step 4 — ETAAgent computed ETA for {len(candidates)} candidates")
+        
+        if progress_callback:
+            eta_data = []
+            for c in candidates:
+                eta_data.append({
+                    "id": c.id,
+                    "estimated_duration_s": c.estimated_duration_s,
+                    "formatted_eta": ETAAgent.format_duration(c.estimated_duration_s)
+                })
+            await progress_callback("eta_estimated", {"routes": eta_data})
 
         # Step 5 — instruction translation
         print(f"\n[RoutingAgent] Step 5 — Calling InstructionParsingAgent (Gemini)...")
@@ -281,7 +362,7 @@ class RoutingAgent:
         
         # Start background live navigation simulation
         import asyncio
-        asyncio.create_task(self._simulate_live_navigation(locked.route_plan))
+        asyncio.create_task(self._simulate_live_navigation(locked.route_plan, progress_callback=progress_callback))
 
         logger.info("RoutingAgent: route auto-locked", extra={"locked_route_id": locked.route_plan.id})
         return locked, notification
@@ -402,38 +483,48 @@ class RoutingAgent:
 
         async def on_obstruction(guidance_text: str):
             import asyncio
-            logger.info("RoutingAgent: Received obstruction event from VisionAgent.")
+            if getattr(self, '_is_handling_obstruction', False):
+                return
+            self._is_handling_obstruction = True
             
-            # 1. Pause navigation simulator
-            if hasattr(self, '_nav_pause_event'):
-                self._nav_pause_event.clear()
-            
-            # 2. Stop current navigation audio if playing
-            if hasattr(self, '_nav_player') and self._nav_player:
-                try:
-                    self._nav_player.terminate()
-                except ProcessLookupError:
-                    pass
-                    
-            # 3. Play a ping/haptic alert immediately
-            ping_proc = await asyncio.create_subprocess_exec("afplay", "/System/Library/Sounds/Glass.aiff")
-            await ping_proc.wait()
-            
-            refined = await self._instruction_parser.parse_vision_instruction(guidance_text)
-            logger.info(f"RoutingAgent: Refined Instruction -> {refined}")
-            
-            # Generate TTS
-            audio_bytes, _ = self._voice.generate_tts_audio(refined)
-            if audio_bytes:
-                with open("temp_tts.mp3", "wb") as f:
-                    f.write(audio_bytes)
-                # Play audio locally for testing and wait for it to finish
-                warn_proc = await asyncio.create_subprocess_exec("afplay", "temp_tts.mp3")
-                await warn_proc.wait()
+            try:
+                logger.info("RoutingAgent: Received obstruction event from VisionAgent.")
                 
-            # 4. Resume navigation
-            if hasattr(self, '_nav_pause_event'):
-                self._nav_pause_event.set()
+                # 1. Pause navigation simulator
+                if hasattr(self, '_nav_pause_event'):
+                    self._nav_pause_event.clear()
+                
+                # 2. Stop current navigation audio if playing
+                if hasattr(self, '_nav_player') and self._nav_player:
+                    try:
+                        self._nav_player.terminate()
+                    except ProcessLookupError:
+                        pass
+                        
+                # 3. Play a ping/haptic alert immediately
+                ping_proc = await asyncio.create_subprocess_exec("afplay", "/System/Library/Sounds/Glass.aiff")
+                await ping_proc.wait()
+                
+                refined = await self._instruction_parser.parse_vision_instruction(guidance_text)
+                logger.info(f"RoutingAgent: Refined Instruction -> {refined}")
+                
+                # Generate TTS
+                audio_bytes, _ = self._voice.generate_tts_audio(refined)
+                if audio_bytes:
+                    import os
+                    import tempfile
+                    tts_path2 = os.path.join(tempfile.gettempdir(), "temp_tts.mp3")
+                    with open(tts_path2, "wb") as f:
+                        f.write(audio_bytes)
+                    # Play audio locally for testing and wait for it to finish
+                    warn_proc = await asyncio.create_subprocess_exec("afplay", tts_path2)
+                    await warn_proc.wait()
+                    
+                # 4. Resume navigation
+                if hasattr(self, '_nav_pause_event'):
+                    self._nav_pause_event.set()
+            finally:
+                self._is_handling_obstruction = False
 
         try:
             dispatched = await self._vision.send(request, on_obstruction_callback=on_obstruction)

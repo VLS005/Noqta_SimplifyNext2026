@@ -42,7 +42,7 @@ class BedrockClient:
 
         # --- Gemini Init ---
         self._gemini_client = None
-        self._gemini_model_id = "gemini-3.6-flash"
+        self._gemini_model_id = "gemini-3.5-flash"
         self._init_client_gemini(settings)
 
     def _init_client_bedrock(self, settings) -> None:
@@ -86,7 +86,7 @@ class BedrockClient:
         except Exception as exc:
             logger.warning(f"BedrockClient: failed to init Gemini client. Reason: {exc}")
 
-    async def invoke_model(self, system_prompt: str, user_prompt: str, model_tier: str = "nova-lite", image_bytes: bytes = None) -> str:
+    async def invoke_model(self, system_prompt: str, user_prompt: str, model_tier: str = "nova-lite", image_bytes: bytes = None, force_gemini: bool = False) -> str:
         """
         Call LLM with fallback logic.
         Tiers:
@@ -94,42 +94,47 @@ class BedrockClient:
         - 'nova-pro': For in-depth reasoning (e.g. multimodal, complex logic).
 
         Fallback chain: Requested Bedrock Model -> Claude 3.5 Sonnet -> Gemini -> hard error.
+        If force_gemini is True, skips directly to Gemini to save AWS credits.
         """
         last_error: Exception | None = None
 
-        # Map tier to actual model ID
-        if model_tier == "nova-pro":
-            model_id = "amazon.nova-pro-v1:0"
+        if force_gemini:
+            # Skip directly to Attempt 3
+            pass
         else:
-            model_id = "amazon.nova-lite-v1:0"
+            # Map tier to actual model ID
+            if model_tier == "nova-pro":
+                model_id = "amazon.nova-pro-v1:0"
+            else:
+                model_id = "amazon.nova-lite-v1:0"
 
-        # Attempt 1: Requested Bedrock Model
-        if self._bedrock_client:
-            try:
-                response_text = self._invoke_bedrock_converse(model_id, system_prompt, user_prompt, image_bytes)
-                print(f"[BedrockClient] AWS {model_id} response received ({len(response_text)} chars)")
-                return response_text
-            except Exception as e:
-                last_error = e
-                if "UnrecognizedClientException" in str(e) or "ExpiredTokenException" in str(e):
-                    logger.error("BedrockClient: Token invalid/expired. Disabling Bedrock and falling back to Gemini.")
-                    self._bedrock_client = None
-                else:
-                    logger.warning(f"BedrockClient: {model_id} failed ({e}). Falling back to Sonnet 3.5...")
-                    print(f"[BedrockClient] WARNING: {model_id} failed ({e}). Falling back...")
+            # Attempt 1: Requested Bedrock Model
+            if self._bedrock_client:
+                try:
+                    response_text = self._invoke_bedrock_converse(model_id, system_prompt, user_prompt, image_bytes)
+                    print(f"[BedrockClient] AWS {model_id} response received ({len(response_text)} chars)")
+                    return response_text
+                except Exception as e:
+                    last_error = e
+                    if "UnrecognizedClientException" in str(e) or "ExpiredTokenException" in str(e):
+                        logger.error("BedrockClient: Token invalid/expired. Disabling Bedrock and falling back to Gemini.")
+                        self._bedrock_client = None
+                    else:
+                        logger.warning(f"BedrockClient: {model_id} failed ({e}). Falling back to Sonnet 3.5...")
+                        print(f"[BedrockClient] WARNING: {model_id} failed ({e}). Falling back...")
 
-                    # Attempt 2: Fallback to Sonnet (if credits/quotas for Nova are out)
-                    try:
-                        fallback_model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
-                        response_text = self._invoke_bedrock_converse(fallback_model, system_prompt, user_prompt, image_bytes)
-                        print(f"[BedrockClient] AWS {fallback_model} fallback response received ({len(response_text)} chars)")
-                        return response_text
-                    except Exception as e2:
-                        last_error = e2
-                        logger.warning(f"BedrockClient: Sonnet fallback failed ({e2}). Falling back to Gemini...")
-                        print(f"[BedrockClient] WARNING: Sonnet fallback failed. Trying Gemini...")
-                        if "UnrecognizedClientException" in str(e2) or "ExpiredTokenException" in str(e2):
-                            self._bedrock_client = None
+                        # Attempt 2: Fallback to Sonnet (if credits/quotas for Nova are out)
+                        try:
+                            fallback_model = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+                            response_text = self._invoke_bedrock_converse(fallback_model, system_prompt, user_prompt, image_bytes)
+                            print(f"[BedrockClient] AWS {fallback_model} fallback response received ({len(response_text)} chars)")
+                            return response_text
+                        except Exception as e2:
+                            last_error = e2
+                            logger.warning(f"BedrockClient: Sonnet fallback failed ({e2}). Falling back to Gemini...")
+                            print(f"[BedrockClient] WARNING: Sonnet fallback failed. Trying Gemini...")
+                            if "UnrecognizedClientException" in str(e2) or "ExpiredTokenException" in str(e2):
+                                self._bedrock_client = None
 
         # Attempt 3: Fallback to Gemini
         if self._gemini_client:

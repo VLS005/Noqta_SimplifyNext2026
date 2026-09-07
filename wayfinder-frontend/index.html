@@ -154,18 +154,33 @@
     </nav>
 
     <script>
+        const API_HOSTNAME = window.location.hostname || '127.0.0.1';
+        
         lucide.createIcons();
         
+        function useCurrentLocation() {
+            const input = document.getElementById('from-input');
+            if(input) input.value = 'Current Location';
+        }
+
         function renderHome() {
             return `
                 <div class="flex flex-col gap-6 w-full">
                     <h1 class="text-h1 mt-4 text-primary">Wayfinder</h1>
                     
-                    <div class="relative w-full">
-                        <input id="search-input" type="text" class="input-base pr-12" placeholder="Where do you want to go?" onkeypress="handleSearch(event)">
-                        <button class="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-primary rounded-full hover:bg-card-hover" onclick="startVoiceSearch()">
-                            <i id="mic-icon" data-lucide="mic" class="w-5 h-5 transition-colors"></i>
-                        </button>
+                    <div class="flex flex-col gap-3 w-full">
+                        <div class="relative w-full flex items-center">
+                            <input id="from-input" type="text" class="input-base pr-10" placeholder="Where from?" value="Current Location">
+                            <button class="absolute right-2 text-info-cyan hover:text-white" onclick="useCurrentLocation()">
+                                <i data-lucide="crosshair" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        <div class="relative w-full">
+                            <input id="search-input" type="text" class="input-base pr-12" placeholder="Where do you want to go?" onkeypress="handleSearch(event)">
+                            <button class="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-primary rounded-full hover:bg-card-hover" onclick="startVoiceSearch()">
+                                <i id="mic-icon" data-lucide="mic" class="w-5 h-5 transition-colors"></i>
+                            </button>
+                        </div>
                     </div>
 
                     <div class="flex flex-col gap-4 mt-2">
@@ -213,8 +228,115 @@
 
         let currentDestination = 'SMU Connexion';
 
-        function renderRoutes(destination = currentDestination) {
-            currentDestination = destination; // Save for the navigation screen
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        let routeSocket = null;
+
+        function renderRoutes(context) {
+            const destination = typeof context === 'string' ? context : (context?.to || currentDestination);
+            const origin = typeof context === 'string' ? 'Current Location' : (context?.from || 'Current Location');
+            currentDestination = destination;
+            
+            const sessionId = generateUUID();
+
+            if (routeSocket) {
+                routeSocket.close();
+            }
+            routeSocket = new WebSocket(`ws://${API_HOSTNAME}:8000/ws/${sessionId}`);
+            
+            routeSocket.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                console.log("WebSocket event:", msg);
+                if (msg.event === 'route_locked') {
+                    window.currentRouteData = msg.data;
+                    // Auto-start route after a brief delay
+                    setTimeout(() => {
+                        navigate('navigating', currentDestination);
+                    }, 500);
+                } else if (msg.event === 'candidates_generated') {
+                    updateRouteCardsBase(msg.data.routes);
+                } else if (msg.event === 'accessibility_scored') {
+                    updateRouteCardsAccessibility(msg.data.routes);
+                } else if (msg.event === 'eta_estimated') {
+                    updateRouteCardsETA(msg.data.routes);
+                } else if (msg.event === 'instruction_update') {
+                    if (window.currentRouteData) {
+                        window.currentRouteData.first_instruction = msg.data.instruction;
+                        // Restart karaoke with the new instruction
+                        if (document.getElementById('karaoke-text')) {
+                            startKaraoke();
+                        }
+                    }
+                }
+            };
+
+            let requestSent = false;
+            function sendRouteRequest(lat, lon) {
+                if (requestSent) return;
+                requestSent = true;
+                const body = {
+                    session_id: sessionId,
+                    origin_label: origin,
+                    destination_label: destination,
+                    user_id: "demo-session-001"
+                };
+                if (lat && lon) {
+                    body.origin_lat = lat;
+                    body.origin_lon = lon;
+                }
+                
+                console.log("Sending API request to:", `http://${API_HOSTNAME}:8000/api/route-request`, body);
+                
+                fetch(`http://${API_HOSTNAME}:8000/api/route-request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                .then(res => {
+                    console.log("API response status:", res.status);
+                    return res.json();
+                })
+                .then(data => {
+                    console.log("API response data:", data);
+                    if (data.status === 'locked') {
+                        window.currentRouteData = data;
+                    }
+                })
+                .catch(e => console.error("API error", e));
+            }
+
+            if (origin === 'Current Location') {
+                if (navigator.geolocation) {
+                    const fallbackTimer = setTimeout(() => {
+                        console.warn("Geolocation hard timeout, falling back");
+                        sendRouteRequest(1.296568, 103.852119);
+                    }, 3000);
+
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            clearTimeout(fallbackTimer);
+                            sendRouteRequest(position.coords.latitude, position.coords.longitude);
+                        },
+                        (error) => {
+                            clearTimeout(fallbackTimer);
+                            console.error("Geolocation error:", error);
+                            // Fallback to a default location (e.g. near SMU)
+                            sendRouteRequest(1.296568, 103.852119);
+                        },
+                        { timeout: 2500 }
+                    );
+                } else {
+                    sendRouteRequest(1.296568, 103.852119);
+                }
+            } else {
+                sendRouteRequest(null, null);
+            }
+
             return `
                 <div class="flex flex-col gap-4 w-full h-full flex-grow pb-24">
                     <div class="flex items-center justify-between mt-2">
@@ -226,82 +348,13 @@
                     
                     <h1 class="text-display mb-2">Routes to ${destination}</h1>
                     
-                    <!-- Horizontal Carousel Container -->
-                    <div class="flex overflow-x-auto gap-6 pb-6 snap-x snap-mandatory hide-scrollbar -mx-5 px-5 flex-grow items-stretch">
-                        
-                        <!-- Route 1 Card -->
-                        <div class="card shrink-0 w-[85vw] max-w-[320px] snap-center border border-info-cyan/30 bg-card flex flex-col justify-between shadow-card-big rounded-xl">
-                            <div class="flex flex-col flex-grow">
-                                <div class="flex justify-between items-start mb-4">
-                                    <div class="text-h1">Route 1</div>
-                                    <div class="text-h1 text-info-cyan font-mono">17<span class="text-body">min</span></div>
-                                </div>
-                                
-                                <div class="flex items-center gap-3 mb-6 bg-surface p-3 rounded-lg border border-card-hover">
-                                    <span class="chip chip-info font-bold text-sm px-3 py-1">92 / 100</span>
-                                    <span class="text-body font-medium text-primary">Highly accessible</span>
-                                </div>
-                                
-                                <div class="flex flex-col gap-4 mt-2 flex-grow">
-                                    <div class="flex items-start gap-3 text-body">
-                                        <div class="mt-0.5"><i data-lucide="check-circle-2" class="w-5 h-5 text-positive"></i></div>
-                                        <div>
-                                            <div class="text-primary font-medium">Tactile paving</div>
-                                            <div class="text-caption text-secondary">Complete route coverage</div>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-start gap-3 text-body">
-                                        <div class="mt-0.5"><i data-lucide="check-circle-2" class="w-5 h-5 text-positive"></i></div>
-                                        <div>
-                                            <div class="text-primary font-medium">Audio crossings</div>
-                                            <div class="text-caption text-secondary">Available at all 3 junctions</div>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-start gap-3 text-body">
-                                        <div class="mt-0.5"><i data-lucide="alert-triangle" class="w-5 h-5 text-negative"></i></div>
-                                        <div>
-                                            <div class="text-primary font-medium">Construction ahead</div>
-                                            <div class="text-caption text-secondary">Minor detour mapped</div>
-                                        </div>
-                                    </div>
-                                </div>
+                    <div id="route-cards-container" class="flex overflow-x-auto gap-6 pb-6 snap-x snap-mandatory hide-scrollbar -mx-5 px-5 flex-grow items-stretch">
+                        <div class="flex items-center justify-center w-full py-10">
+                            <div class="animate-pulse flex flex-col items-center">
+                                <i data-lucide="loader" class="w-8 h-8 text-info-cyan animate-spin mb-4"></i>
+                                <span class="text-body text-secondary">Finding routes...</span>
                             </div>
-                            <button class="btn bg-gradient-turquoise text-white shadow-[0_4px_15px_rgba(13,128,145,0.4)] hover:opacity-90 btn-lg mt-6 w-full text-lg" onclick="navigate('navigating', '${destination}')">Start Route 1</button>
                         </div>
-
-                        <!-- Route 2 Card -->
-                        <div class="card shrink-0 w-[85vw] max-w-[320px] snap-center border border-card-hover bg-card flex flex-col justify-between shadow-card-big rounded-xl">
-                            <div class="flex flex-col flex-grow">
-                                <div class="flex justify-between items-start mb-4">
-                                    <div class="text-h1">Route 2</div>
-                                    <div class="text-h1 text-primary font-mono">21<span class="text-body">min</span></div>
-                                </div>
-                                
-                                <div class="flex items-center gap-3 mb-6 bg-surface p-3 rounded-lg border border-card-hover">
-                                    <span class="chip chip-neutral font-bold text-sm px-3 py-1 bg-card-hover">78 / 100</span>
-                                    <span class="text-body font-medium text-primary">Moderate</span>
-                                </div>
-                                
-                                <div class="flex flex-col gap-4 mt-2 flex-grow">
-                                    <div class="flex items-start gap-3 text-body">
-                                        <div class="mt-0.5"><i data-lucide="check-circle-2" class="w-5 h-5 text-positive"></i></div>
-                                        <div>
-                                            <div class="text-primary font-medium">Bus 176 direct</div>
-                                            <div class="text-caption text-secondary">No transfers required</div>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-start gap-3 text-body">
-                                        <div class="mt-0.5"><i data-lucide="x-circle" class="w-5 h-5 text-negative"></i></div>
-                                        <div>
-                                            <div class="text-primary font-medium">Complicated crossing</div>
-                                            <div class="text-caption text-secondary">No audio signals present</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <button class="btn btn-secondary btn-lg mt-6 w-full text-lg bg-surface border-card-hover text-primary hover:bg-card-hover" onclick="navigate('navigating', '${destination}')">Start Route 2</button>
-                        </div>
-
                     </div>
                     
                     <div class="flex justify-center gap-2 mt-auto pb-4">
@@ -312,16 +365,149 @@
             `;
         }
 
+        function updateRouteCardsBase(routes) {
+            const container = document.getElementById('route-cards-container');
+            if (!container) return;
+            
+            let html = '';
+            routes.forEach((route, index) => {
+                const isFirst = index === 0;
+                html += `
+                    <div id="route-card-${route.id}" class="card shrink-0 w-[85vw] max-w-[320px] snap-center border ${isFirst ? 'border-info-cyan/30' : 'border-card-hover'} bg-card flex flex-col justify-between shadow-card-big rounded-xl">
+                        <div class="flex flex-col flex-grow">
+                            <div class="flex justify-between items-start mb-2">
+                                <div class="text-h1">Route ${index + 1}</div>
+                                <div id="eta-${route.id}" class="text-h1 text-secondary font-mono animate-pulse">--<span class="text-body">min</span></div>
+                            </div>
+                            
+                            <div class="text-caption text-secondary font-mono mb-4 bg-surface p-2 rounded-md border border-card-hover">
+                                ${route.summary}
+                            </div>
+                            
+                            <div id="acc-${route.id}" class="flex items-center gap-3 mb-6 bg-surface p-3 rounded-lg border border-card-hover">
+                                <span class="text-body-subtle text-secondary animate-pulse">Scoring accessibility...</span>
+                            </div>
+                            
+                            <div id="acc-details-${route.id}" class="flex flex-col gap-4 mt-2 flex-grow">
+                            </div>
+                        </div>
+                        <button class="btn ${isFirst ? 'bg-gradient-turquoise text-white shadow-[0_4px_15px_rgba(13,128,145,0.4)]' : 'btn-secondary bg-surface border-card-hover text-primary'} hover:opacity-90 btn-lg mt-6 w-full text-lg" onclick="navigate('navigating', '${currentDestination}')">Start Route ${index + 1}</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        function updateRouteCardsAccessibility(routes) {
+            routes.forEach(route => {
+                const accBox = document.getElementById(`acc-${route.id}`);
+                const accDetails = document.getElementById(`acc-details-${route.id}`);
+                if (!accBox || !accDetails) return;
+                
+                const score = Math.round(route.score * 100);
+                const isHigh = score > 80;
+                const isMid = score > 50 && score <= 80;
+                
+                let chipClass = 'chip-neutral bg-card-hover';
+                let accLabel = 'Moderate';
+                if (isHigh) { chipClass = 'chip-info'; accLabel = 'Highly accessible'; }
+                else if (!isMid && !isHigh) { chipClass = 'chip-warning'; accLabel = 'Caution'; }
+                
+                accBox.innerHTML = `
+                    <span class="chip ${chipClass} font-bold text-sm px-3 py-1">${score} / 100</span>
+                    <span class="text-body font-medium text-primary">${accLabel}</span>
+                `;
+                
+                let detailsHtml = '';
+
+                // 1. Step-free
+                const isStepFree = route.step_free;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${isStepFree ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${isStepFree ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Step-free</div>
+                            <div class="text-caption text-secondary">${isStepFree ? 'No stairs required' : 'Stairs present on route'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 2. Tactile paving
+                const hasTactile = route.tactile_paving;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${hasTactile ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${hasTactile ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Tactile paving</div>
+                            <div class="text-caption text-secondary">${hasTactile ? 'Present on main paths' : 'Not available on route'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 3. Lighting
+                const goodLighting = route.lighting === 'GOOD';
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${goodLighting ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${goodLighting ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Lighting</div>
+                            <div class="text-caption text-secondary">${goodLighting ? 'Well-lit paths' : 'Poor or unknown lighting'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 4. Obstruction risk
+                const lowObstruction = route.obstruction_risk <= 0.3;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${lowObstruction ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${lowObstruction ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Obstruction risk</div>
+                            <div class="text-caption text-secondary">${lowObstruction ? 'Clear pathways' : 'High obstruction risk'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 5. Crowding estimate
+                const lowCrowding = route.crowding_estimate <= 0.5;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${lowCrowding ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${lowCrowding ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Crowding</div>
+                            <div class="text-caption text-secondary">${lowCrowding ? 'Not crowded' : 'High foot traffic expected'}</div>
+                        </div>
+                    </div>
+                `;
+                accDetails.innerHTML = detailsHtml;
+            });
+            lucide.createIcons();
+        }
+
+        function updateRouteCardsETA(routes) {
+            routes.forEach((route, index) => {
+                const etaBox = document.getElementById(`eta-${route.id}`);
+                if (!etaBox) return;
+                
+                const isFirst = index === 0;
+                const min = Math.round(route.estimated_duration_s / 60);
+                
+                etaBox.className = `text-h1 ${isFirst ? 'text-info-cyan' : 'text-primary'} font-mono`;
+                etaBox.innerHTML = `${min}<span class="text-body">min</span>`;
+            });
+        }
+
         let pollingInterval = null;
 
         async function checkBusStatus() {
             try {
-                const response = await fetch(`http://${window.location.hostname}:8002/agent/check-bus`, {
+                const response = await fetch(`http://${API_HOSTNAME}:8002/agent/check-bus`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         journey: {
-                            user_id: "demo-user",
+                            user_id: "demo-session-001",
                             bus_stop_code: "01012",
                             expected_bus: "176",
                             destination: "SMU",
@@ -396,6 +582,12 @@
                         <span class="chip chip-success">
                             <i data-lucide="navigation" class="w-4 h-4"></i> Active
                         </span>
+                    </div>
+
+                    <div id="karaoke-container" class="bg-surface rounded-md p-lg border border-info-cyan/30 shadow-[0_0_15px_rgba(13,128,145,0.15)] min-h-[100px] flex items-center justify-center">
+                        <p id="karaoke-text" class="text-h2 text-secondary leading-relaxed w-full text-center">
+                            Loading instruction...
+                        </p>
                     </div>
 
                     <!-- Landmark Verification Agent (Camera Preview) -->
@@ -561,7 +753,7 @@
             const originalText = btn.innerHTML;
             btn.innerHTML = 'Syncing...';
             try {
-                await fetch(`http://${window.location.hostname}:8002/preferences`, {
+                await fetch(`http://${API_HOSTNAME}:8002/preferences`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
@@ -677,6 +869,10 @@
                 clearInterval(pollingInterval);
                 pollingInterval = null;
             }
+            if (window.karaokeInterval) {
+                clearInterval(window.karaokeInterval);
+                window.karaokeInterval = null;
+            }
             stopCamera();
 
             // Scroll to top
@@ -687,7 +883,22 @@
             else if (page === 'summary') html = renderSummary(context || currentDestination);
             else if (page === 'navigating') {
                 html = renderNavigating(context || currentDestination);
-                setTimeout(startCamera, 100); // Start camera after DOM injection
+                setTimeout(() => {
+                    startCamera();
+                    startKaraoke();
+                    
+                    // Auto-trigger vision agent for this demo session
+                    const routeSessionId = window.currentRouteData?.session_id || 'demo-session-001';
+                    fetch(`http://${API_HOSTNAME}:8000/api/sessions/${routeSessionId}/vision-assist`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            waypoint_id: 'demo-waypoint',
+                            user_distance_m: 5.0,
+                            context: 'auto-trigger'
+                        })
+                    }).catch(err => console.error("Vision assist trigger failed:", err));
+                }, 100); // Start camera, karaoke, and vision-assist after DOM injection
             }
             else if (page === 'history') html = renderHistory();
             else if (page === 'logs') html = renderLogs();
@@ -703,9 +914,11 @@
 
         function handleSearch(event) {
             if (event.key === 'Enter') {
-                const val = event.target.value.trim();
-                if (val) {
-                    navigate('routes', val);
+                const toVal = event.target.value.trim();
+                const fromInput = document.getElementById('from-input');
+                const fromVal = fromInput ? fromInput.value.trim() || 'Current Location' : 'Current Location';
+                if (toVal) {
+                    navigate('routes', { to: toVal, from: fromVal });
                 }
             }
         }
@@ -733,8 +946,10 @@
             recognition.onresult = function(event) {
                 const transcript = event.results[0][0].transcript;
                 searchInput.value = transcript;
+                const fromInput = document.getElementById('from-input');
+                const fromVal = fromInput ? fromInput.value.trim() || 'Current Location' : 'Current Location';
                 setTimeout(() => {
-                    navigate('routes', transcript);
+                    navigate('routes', { to: transcript, from: fromVal });
                 }, 1000);
             };
 
@@ -752,6 +967,48 @@
             }
 
             recognition.start();
+        }
+        window.karaokeInterval = null;
+        function startKaraoke() {
+            if (window.karaokeInterval) clearInterval(window.karaokeInterval);
+            
+            const instruction = window.currentRouteData?.first_instruction || (window.currentRouteData?.micro_instructions?.[0]) || "Walk straight until you feel the raised tactile dots underfoot.";
+            const words = instruction.split(' ');
+            const container = document.getElementById('karaoke-text');
+            if (!container) return;
+            
+            let html = '';
+            words.forEach((word, idx) => {
+                html += `<span id="k-word-${idx}" class="transition-all duration-200 inline-block mx-[2px] text-secondary">${word}</span> `;
+            });
+            container.innerHTML = html;
+            
+            let currentIndex = 0;
+            window.karaokeInterval = setInterval(() => {
+                // Reset previous
+                if (currentIndex > 0) {
+                    const prev = document.getElementById(`k-word-${currentIndex - 1}`);
+                    if (prev) {
+                        prev.className = "transition-all duration-200 inline-block mx-[2px] text-primary";
+                    }
+                }
+                
+                // Set current
+                if (currentIndex < words.length) {
+                    const curr = document.getElementById(`k-word-${currentIndex}`);
+                    if (curr) {
+                        curr.className = "transition-all duration-200 inline-block mx-[2px] text-white font-bold scale-110 drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]";
+                    }
+                    currentIndex++;
+                } else {
+                    // Loop back
+                    currentIndex = 0;
+                    words.forEach((w, idx) => {
+                        const el = document.getElementById(`k-word-${idx}`);
+                        if(el) el.className = "transition-all duration-200 inline-block mx-[2px] text-secondary";
+                    });
+                }
+            }, 400);
         }
     </script>
 </body>

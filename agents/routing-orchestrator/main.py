@@ -94,7 +94,7 @@ async def lifespan(app: FastAPI):
     logger.info("SimplifyNext Orchestrator shutting down")
 
 app = FastAPI(
-    title="SimplifyNext — Agent Orchestrator",
+    title="Routing Agent",
     description="Single entry point for the SimplifyNext multi-agent navigation system.",
     version="0.1.0",
     docs_url="/docs",
@@ -105,7 +105,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # TODO: restrict to frontend domain in production
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -117,6 +117,7 @@ app.add_middleware(
 
 
 class RouteRequestReq(BaseModel):
+    session_id: str | None = None
     origin_label: str
     destination_label: str
     user_id: str = "anonymous"
@@ -151,7 +152,7 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
     """Triggers the full routing pipeline and returns route options."""
     from backend.routing_agent.models import RouteRequestMessage
     import uuid
-    session_id = str(uuid.uuid4())
+    session_id = body.session_id if body.session_id else str(uuid.uuid4())
     print(f"\n[API] POST /api/route-request")
     print(f"[API] Origin: {body.origin_label} | Destination: {body.destination_label}")
     print(f"[API] User: {body.user_id} | Session: {session_id}")
@@ -162,7 +163,11 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
             origin_lat=body.origin_lat, origin_lon=body.origin_lon,
             destination_lat=body.destination_lat, destination_lon=body.destination_lon,
         )
-        locked, notification = await agent.handle_route_request(msg)
+        
+        async def broadcast_progress(event_name: str, payload: dict):
+            await ws_manager.broadcast(session_id, {"event": event_name, "data": payload})
+            
+        locked, notification = await agent.handle_route_request(msg, progress_callback=broadcast_progress)
         result = {
             "status": "locked",
             "session_id": session_id,
@@ -171,6 +176,7 @@ async def route_request(body: RouteRequestReq, agent: RoutingAgentDep) -> dict:
             "first_instruction": notification.first_micro_instruction,
             "estimated_duration_s": locked.route_plan.estimated_duration_s,
             "total_waypoints": notification.total_waypoints,
+            "micro_instructions": locked.route_plan.micro_instructions,
         }
         print(f"\n[API] Route request SUCCESS — auto-locked best route: '{result['route_label']}'")
         await ws_manager.broadcast(session_id, {"event": "route_locked", "data": result})
@@ -215,14 +221,15 @@ async def websocket_events(session_id: str, websocket: WebSocket) -> None:
     await ws_manager.connect(session_id, websocket)
     try:
         while True:
-            data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-            if data == "ping":
-                await websocket.send_text("pong")
-    except asyncio.TimeoutError:
-        try:
-            await websocket.send_json({"event": "keepalive"})
-        except Exception:
-            pass
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"event": "keepalive"})
+                except Exception:
+                    break
     except WebSocketDisconnect:
         pass
     finally:

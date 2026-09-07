@@ -62,10 +62,10 @@ class Settings(BaseSettings):
 
     # ─── External agents ──────────────────────────────────────────────────────
     personalization_agent_url: str = Field(
-        default="http://localhost:8001/inbound/start-timer"
+        default="http://localhost:8002/inbound/start-timer"
     )
     personalization_agent_timeout_s: int = Field(default=5)
-
+    
     # ─── Business logic ───────────────────────────────────────────────────────
     vision_proximity_gate_m: float = Field(default=5.0)
     max_route_candidates: int = Field(default=3)

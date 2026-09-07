@@ -236,8 +236,8 @@ class VisionAgent:
                                 guidance_text = self.sectorize_and_guide(last_labels)
                                 if "completely clear" not in guidance_text and on_obstruction_callback:
                                     # Layer 2: Multimodal analysis
-                                    system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward."
-                                    user_prompt = f"Rekognition Labels: {last_labels}\n\nWhat are the hazards?"
+                                    system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward and provide directions on how to move away from the obstructions."
+                                    user_prompt = f"Rekognition Labels: {last_labels}\n\nWhat are the hazards, and what directions should I take to avoid them safely?"
                                     try:
                                         deep_context = await self._bedrock.invoke_model(
                                             system_prompt=system_prompt,
