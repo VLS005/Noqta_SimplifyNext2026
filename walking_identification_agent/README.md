@@ -49,7 +49,43 @@ python tests/test_detection.py
 
 ## Known simplifications (MVP scope)
 
-- Weather, vision, and haptic/audio calls are mocked - swap the function bodies
-  in `integrations/` for real API calls once the happy-path demo works.
+- Weather and vision (obstruction/anchor-point detection) calls are mocked -
+  swap the function bodies in `integrations/` for real API calls once the
+  happy-path demo works.
 - `alert_cooldown_sec` in `config/settings.py` prevents nagging the user with
   repeated prompts while a condition persists - tune this during testing.
+- `attempt_weather_placeholder` in `config/settings.py` defaults to False -
+  the Routing Agent has no "weather" endpoint yet, so this stays off by
+  default to avoid an unexplained failure appearing during a live demo.
+  See `api_schemas/inbound_weather.py` for details.
+
+## Speech recognition (confirmation prompts: "yes"/"no"/"help")
+
+Offline, not cloud-based - see `integrations/speech/speech_to_text.py`'s
+docstring for the full reasoning. Summary:
+
+- Uses `pocketsphinx` with a JSGF grammar (`confirmation.gram`) constraining
+  recognition to exactly {"yes", "no", "help"} - not general speech
+  understanding, which this doesn't need.
+- A voice-activity-detection (VAD) gate runs BEFORE recognition. This is
+  NOT optional - testing found that silence fed directly into the
+  grammar-constrained recognizer gets misheard as "no" at HIGHER confidence
+  than genuine speech. Skipping VAD would mean the agent falsely "hears" a
+  dismissal every time the user simply hasn't responded yet.
+- Requires 16kHz mono 16-bit PCM audio. pocketsphinx silently produces
+  garbage on the wrong sample rate rather than erroring - our wrapper
+  raises a clear `ValueError` instead.
+- Recording itself (`integrations/haptic_audio.py`) uses `sounddevice` for
+  real microphone capture. This needs the PortAudio system library:
+  `brew install portaudio` on macOS, `apt-get install portaudio19-dev` on
+  Linux, before `pip install -r requirements.txt` will fully work.
+- If the microphone is unavailable, or no speech is detected, the agent
+  defaults to `"no"` (the safe choice - it means "don't reroute" rather
+  than risking an unwanted reroute triggered by silence).
+- Text-to-speech (actually *speaking* the prompt aloud) is still a `print()`
+  placeholder - the Routing Agent's `VoiceAgent` already uses Amazon Polly
+  for this exact purpose, which is the natural real implementation to reuse
+  rather than building a second one.
+- Tests use committed real audio fixtures (`tests/fixtures/`) synthesized
+  once via `espeak`, so running the tests doesn't require `espeak`/`sox` to
+  be installed - only `pocketsphinx` (already a dependency).

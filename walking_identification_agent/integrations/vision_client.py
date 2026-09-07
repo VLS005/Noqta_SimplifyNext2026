@@ -11,9 +11,13 @@ from typing import Optional
 from domain.models import GPSPoint
 
 
-def check_obstruction(position: GPSPoint) -> Optional[str]:
+def check_obstruction(position: GPSPoint) -> Optional[dict]:
     """Trigger a snapshot and ask the vision model if there's a visible
-    obstruction in the path. Returns a description, or None if clear."""
+    obstruction in the path. Returns a dict with 'description' and
+    'severity' (low/medium/high - matches the Routing Agent's
+    ObstructionReportMessage.severity contract), or None if the path is
+    clear. Severity is required by the Routing Agent's schema, not optional -
+    it must come from here, not be guessed downstream."""
     return None
 
 
