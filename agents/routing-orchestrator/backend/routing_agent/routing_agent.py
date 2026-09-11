@@ -270,6 +270,8 @@ class RoutingAgent:
                     "tactile_paving": c.accessibility_score.tactile_paving,
                     "step_free": c.accessibility_score.step_free,
                     "lighting": c.accessibility_score.lighting_quality.value,
+                    "obstruction_risk": c.accessibility_score.obstruction_risk,
+                    "crowding_estimate": c.accessibility_score.crowding_estimate,
                     "obstruction_risk": c.accessibility_score.obstruction_risk
                 })
             await progress_callback("accessibility_scored", {"routes": acc_data})

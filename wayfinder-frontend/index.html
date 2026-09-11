@@ -155,7 +155,98 @@
 
     <script>
         const API_HOSTNAME = window.location.hostname || '127.0.0.1';
+        const WALKING_AGENT_PORT = 8003; // Walking Identification Agent's own service, separate from the Routing Agent (8000)
+
+        // ── Walking Identification Agent integration ──────────────────────
+        // Added separately from the rest of this file's logic - only called
+        // once a real session_id exists (after /api/route-request succeeds).
+        // Failure here (agent not running, etc.) is caught and logged, never
+        // breaks the main routing/navigation flow above it.
+        let walkingAgentSocket = null;
+        let walkingAgentWatchId = null;
+
+        function showWalkingAgentAlert(data) {
+            const causeLabels = {
+                obstruction: '⚠️ Obstruction detected',
+                bad_weather: '🌧️ Bad weather detected',
+                disoriented: '🧭 You may be off track',
+            };
+            const detail = typeof data.detail === 'object' ? JSON.stringify(data.detail) : data.detail;
+            document.getElementById('walking-agent-alert-title').textContent = causeLabels[data.cause] || data.cause;
+            document.getElementById('walking-agent-alert-detail').textContent = detail;
+            document.getElementById('walking-agent-alert').classList.remove('hidden');
+        }
+
+        function startWalkingAgent(sessionId, waypointId) {
+            fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, waypoint_id: waypointId || null }),
+            }).catch(e => console.warn('Walking agent not reachable (non-fatal):', e));
+
+            try {
+                walkingAgentSocket = new WebSocket(`ws://${API_HOSTNAME}:${WALKING_AGENT_PORT}/ws/${sessionId}`);
+                walkingAgentSocket.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.event === 'walking_agent_alert') showWalkingAgentAlert(msg.data);
+                };
+                walkingAgentSocket.onerror = () => console.warn('Walking agent WebSocket error (non-fatal)');
+            } catch (e) {
+                console.warn('Could not open walking agent WebSocket (non-fatal):', e);
+            }
+
+            // Feed real GPS into the agent as it becomes available. Heading/pace
+            // aren't available from the browser Geolocation API alone, so
+            // reasonable defaults are sent - swap for real device sensor data
+            // once available (e.g. from a companion mobile app).
+            if (navigator.geolocation && navigator.geolocation.watchPosition) {
+                walkingAgentWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/sensor-tick`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: sessionId,
+                                lat: position.coords.latitude,
+                                lon: position.coords.longitude,
+                                heading_deg: position.coords.heading || 0,
+                                steps_per_minute: 95, // placeholder - no real pace sensor available in-browser
+                                timestamp: Date.now() / 1000,
+                            }),
+                        }).catch(() => {}); // non-fatal - don't spam console on every tick
+                    },
+                    (err) => console.warn('Geolocation watch error (non-fatal):', err),
+                    { enableHighAccuracy: true, maximumAge: 5000 }
+                );
+            }
+        }
         
+        window.simulateDisorientation = function() {
+            if (!window.currentRouteData || !window.currentRouteData.session_id) return;
+            console.log("Simulating disorientation...");
+            let i = 0;
+            const simInterval = setInterval(() => {
+                if (i >= 5) {
+                    clearInterval(simInterval);
+                    return;
+                }
+                fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/sensor-tick`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: window.currentRouteData.session_id,
+                        lat: 1.296568,
+                        lon: 103.852119,
+                        heading_deg: (i * 90) % 360, // Simulate turning in a circle
+                        steps_per_minute: 95,
+                        timestamp: Date.now() / 1000,
+                    }),
+                }).catch(() => {});
+                i++;
+            }, 1000); // 1 tick per second for 5 seconds
+        };
+        // ── End Walking Identification Agent integration ──────────────────
+
         lucide.createIcons();
         
         function useCurrentLocation() {
@@ -254,10 +345,11 @@
                 console.log("WebSocket event:", msg);
                 if (msg.event === 'route_locked') {
                     window.currentRouteData = msg.data;
-                    // Auto-start route after a brief delay
+                    // Introduce a 30s delay to allow the user to see the tabs and 
+                    // prepare the phone for the vision agent before auto-navigating.
                     setTimeout(() => {
                         navigate('navigating', currentDestination);
-                    }, 500);
+                    }, 30000); // 30,000 ms = 30 seconds
                 } else if (msg.event === 'candidates_generated') {
                     updateRouteCardsBase(msg.data.routes);
                 } else if (msg.event === 'accessibility_scored') {
@@ -305,6 +397,7 @@
                     console.log("API response data:", data);
                     if (data.status === 'locked') {
                         window.currentRouteData = data;
+                        startWalkingAgent(data.session_id, data.locked_route_id);
                     }
                 })
                 .catch(e => console.error("API error", e));
@@ -502,7 +595,7 @@
 
         async function checkBusStatus() {
             try {
-                const response = await fetch(`http://${API_HOSTNAME}:8001/agent/check-bus`, {
+                const response = await fetch(`http://${API_HOSTNAME}:8004/agent/check-bus`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -565,11 +658,25 @@
             }
         }
 
+        function startCamera() {
+            const video = document.getElementById('camera-feed');
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && video) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                    .then(stream => {
+                        video.srcObject = stream;
+                    })
+                    .catch(err => {
+                        console.error('Camera access denied or unavailable:', err);
+                    });
+            }
+        }
+
         function renderNavigating(destination = currentDestination) {
             setTimeout(() => {
                 checkBusStatus();
                 if (pollingInterval) clearInterval(pollingInterval);
                 pollingInterval = setInterval(checkBusStatus, 5000);
+                startCamera();
             }, 100);
 
             return `
@@ -593,14 +700,14 @@
                     <!-- Landmark Verification Agent (Camera Preview) -->
                     <div class="relative w-full h-64 bg-[#020617] rounded-md overflow-hidden border border-info-cyan shadow-card-big mt-2">
                         <video id="camera-feed" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0 opacity-70"></video>
-                        <div class="absolute inset-0 bg-[rgba(13,128,145,0.05)] animate-pulse z-0"></div>
-                        <div class="absolute inset-0 flex flex-col items-center justify-center text-info-cyan z-10 drop-shadow-md">
-                            <i data-lucide="scan-eye" class="w-12 h-12 mb-2 animate-bounce"></i>
-                            <div class="font-mono font-bold tracking-widest text-lg bg-page/50 px-2 rounded">SCANNING</div>
-                            <div class="text-primary mt-1 text-body bg-page/50 px-2 rounded">Target: "Red Pillar"</div>
+                        <img id="vision-annotated-stream" class="absolute inset-0 w-full h-full object-cover z-10 hidden" />
+                        
+                        <!-- Vision Guidance Text Overlay -->
+                        <div class="absolute bottom-4 left-4 right-4 z-30 hidden bg-black/70 p-2 rounded-md border border-warning">
+                            <p id="vision-guidance-text" class="text-warning text-sm font-bold text-center"></p>
                         </div>
-                        <!-- Scanner Line Effect -->
-                        <div class="absolute top-0 left-0 w-full h-0.5 bg-info-cyan shadow-[0_0_15px_#0D8091] animate-scan z-20"></div>
+
+                        <!-- Scanner Line Effect (Removed per user request) -->
                         
                         <!-- HUD Elements -->
                         <div class="absolute top-3 left-3 flex gap-1 z-10">
@@ -836,9 +943,15 @@
         }
 
         let cameraStream = null;
+        let visionWs = null;
+        let visionCaptureInterval = null;
 
         async function startCamera() {
             try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("Camera API not available! Are you missing the Chrome bypass flag, or using HTTP instead of HTTPS?");
+                }
+
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: 'environment' } 
                 });
@@ -847,10 +960,69 @@
                 if (videoElement) {
                     videoElement.srcObject = stream;
                     videoElement.play().catch(e => console.warn('Video play blocked:', e));
+
+                    // Setup Vision WebSocket and Canvas
+                    const routeSessionId = window.currentRouteData?.session_id || 'demo-session-001';
+                    // We must use ws:// if http:// or wss:// if https://
+                    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    visionWs = new WebSocket(`${wsProtocol}//${API_HOSTNAME}:8000/ws/vision-stream/${routeSessionId}`);
+                    
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    visionWs.onopen = () => {
+                        console.log("Vision WebSocket Connected");
+                        const guidanceEl = document.getElementById('vision-guidance-text');
+                        if (guidanceEl) {
+                            guidanceEl.innerText = "Vision System Connected!";
+                            guidanceEl.parentElement.classList.remove('hidden');
+                        }
+                        visionCaptureInterval = setInterval(() => {
+                            if (videoElement.videoWidth && videoElement.videoHeight) {
+                                canvas.width = videoElement.videoWidth;
+                                canvas.height = videoElement.videoHeight;
+                                ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                                
+                                // Send as medium quality JPEG
+                                const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+                                if (visionWs.readyState === WebSocket.OPEN) {
+                                    visionWs.send(dataUrl);
+                                }
+                            }
+                        }, 500); // 2 FPS to save bandwidth
+                    };
+                    
+                    visionWs.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        const imgEl = document.getElementById('vision-annotated-stream');
+                        const guidanceEl = document.getElementById('vision-guidance-text');
+                        
+                        if (imgEl && data.image) {
+                            imgEl.src = data.image;
+                            imgEl.classList.remove('hidden');
+                        }
+                        
+                        if (guidanceEl && data.guidance !== undefined) {
+                            guidanceEl.innerText = data.guidance;
+                            if (data.guidance !== '') {
+                                guidanceEl.parentElement.classList.remove('hidden');
+                            } else {
+                                // Keep it hidden if no guidance
+                            }
+                        }
+                    };
+                    
+                    visionWs.onclose = () => {
+                        console.log("Vision WebSocket Closed");
+                    };
                 }
             } catch (err) {
                 console.error("Camera access denied or unavailable", err);
-                // Fallback handled by the dark background
+                const guidanceEl = document.getElementById('vision-guidance-text');
+                if (guidanceEl) {
+                    guidanceEl.innerText = `Camera Error: ${err.message}`;
+                    guidanceEl.parentElement.classList.remove('hidden');
+                }
             }
         }
 
@@ -858,6 +1030,23 @@
             if (cameraStream) {
                 cameraStream.getTracks().forEach(track => track.stop());
                 cameraStream = null;
+            }
+            if (visionCaptureInterval) {
+                clearInterval(visionCaptureInterval);
+                visionCaptureInterval = null;
+            }
+            if (visionWs) {
+                visionWs.close();
+                visionWs = null;
+            }
+            const imgEl = document.getElementById('vision-annotated-stream');
+            if (imgEl) {
+                imgEl.classList.add('hidden');
+            }
+            const guidanceEl = document.getElementById('vision-guidance-text');
+            if (guidanceEl) {
+                guidanceEl.innerText = '';
+                guidanceEl.parentElement.classList.add('hidden');
             }
         }
 

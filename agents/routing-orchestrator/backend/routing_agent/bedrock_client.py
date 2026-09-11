@@ -42,7 +42,7 @@ class BedrockClient:
 
         # --- Gemini Init ---
         self._gemini_client = None
-        self._gemini_model_id = "gemini-3.5-flash"
+        self._gemini_model_id = "gemini-3.5-flash-lite"
         self._init_client_gemini(settings)
 
     def _init_client_bedrock(self, settings) -> None:
