@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Noqta</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons (Lucide) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        page: '#040D3F',
+                        surface: '#141C4E',
+                        card: '#1D2552',
+                        'card-hover': '#243066',
+                        primary: '#FFFFFF',
+                        secondary: '#B9BBC7',
+                        tertiary: '#6A7178',
+                        'neutral-4': '#DEE2E6',
+                        'neutral-6': '#ADB5BD',
+                        positive: '#7FE089',
+                        negative: '#F97D7D',
+                        'info-cyan': '#0D8091',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['IBM Plex Mono', 'JetBrains Mono', 'monospace'],
+                    },
+                    fontSize: {
+                        'hero': ['48px', { lineHeight: '1.05', fontWeight: '700' }],
+                        'display': ['32px', { lineHeight: '1.2', fontWeight: '700' }],
+                        'h1': ['22px', { lineHeight: '1.25', fontWeight: '700' }],
+                        'h2': ['16px', { lineHeight: '1.3', fontWeight: '600' }],
+                        'card-title': ['16px', { lineHeight: '1.3', fontWeight: '600' }],
+                        'body': ['14px', { lineHeight: '1.4', fontWeight: '500' }],
+                        'body-subtle': ['13px', { lineHeight: '1.4', fontWeight: '500' }],
+                        'caption': ['12px', { lineHeight: '1.4', fontWeight: '400' }],
+                        'micro': ['11px', { lineHeight: '1.3', fontWeight: '600' }],
+                        'mono-num': ['14px', { lineHeight: '1.4', fontWeight: '500' }],
+                    },
+                    spacing: {
+                        'xs': '4px',
+                        'sm': '8px',
+                        'md': '12px',
+                        'lg': '16px',
+                        'xl': '20px',
+                        '2xl': '24px',
+                        '3xl': '32px',
+                    },
+                    borderRadius: {
+                        'xs': '6px',
+                        'sm': '8px',
+                        'md': '12px',
+                        'lg': '16px',
+                        'full': '9999px',
+                    },
+                    boxShadow: {
+                        'none': '0 0 #0000',
+                        'tile': '0 2px 4px 0 rgba(0, 0, 0, 0.10)',
+                        'card-big': '0 0 60px 0 rgba(0, 4, 26, 0.60)',
+                        'modal': '0 8px 32px 0 rgba(0, 0, 0, 0.30)',
+                    },
+                    keyframes: {
+                        scan: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(240px)' },
+                        }
+                    },
+                    animation: {
+                        scan: 'scan 2.5s ease-in-out infinite',
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            /* Hide scrollbars but allow scrolling */
+            .hide-scrollbar::-webkit-scrollbar { display: none; }
+            .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            .btn {
+                @apply flex items-center justify-center font-sans transition-all duration-150 disabled:opacity-40 disabled:pointer-events-none rounded-full font-semibold;
+            }
+            .btn-primary { @apply bg-primary text-page; }
+            .btn-secondary { @apply bg-transparent text-secondary border border-card; }
+            .btn-active { @apply bg-card text-primary; }
+            
+            .btn-sm { @apply py-1.5 px-3 text-body-subtle; }
+            .btn-md { @apply py-2 px-4 text-body; }
+            .btn-lg { @apply py-2.5 px-5 text-body; }
+
+            .card {
+                @apply bg-card rounded-md p-lg shadow-tile hover:bg-card-hover transition-colors;
+            }
+            
+            .input-base {
+                @apply w-full bg-surface border border-card rounded-md h-[48px] px-lg text-body text-primary font-sans transition-colors outline-none focus:border-info-cyan focus:border-2 hover:border-card-hover disabled:opacity-50;
+            }
+            
+            .chip {
+                @apply inline-flex items-center gap-xs px-2 py-1 rounded-xs text-micro font-sans;
+            }
+            .chip-success { @apply bg-[rgba(127,224,137,0.15)] text-positive; }
+            .chip-warning { @apply bg-[rgba(249,125,125,0.15)] text-negative; }
+            .chip-error { @apply bg-[rgba(249,125,125,0.15)] text-negative; }
+            .chip-info { @apply bg-[rgba(13,128,145,0.15)] text-info-cyan; }
+            .chip-neutral { @apply bg-neutral-6 text-primary; }
+            
+            /* Gradient cards */
+            .bg-gradient-turquoise { background: linear-gradient(135deg, #0D8091 0%, #1AB8C7 100%); }
+            .bg-gradient-pink { background: linear-gradient(135deg, #B53D7F 0%, #E45D9A 100%); }
+            .bg-gradient-purple { background: linear-gradient(135deg, #5A2D8A 0%, #8B4FBF 100%); }
+            
+            /* Hide scrollbar for clean UI */
+            ::-webkit-scrollbar { display: none; }
+            * { -ms-overflow-style: none; scrollbar-width: none; }
+        }
+    </style>
+</head>
+<body class="bg-page text-primary font-sans antialiased pb-20">
+    <!-- Walking Identification Agent - live alert banner (added separately from the main app UI, does not affect existing views) -->
+    <div id="walking-agent-alert" class="fixed top-4 left-4 right-4 max-w-md mx-auto z-50 hidden">
+        <div class="bg-surface border-2 rounded-xl p-4 shadow-lg flex items-start gap-3" style="border-color: #F97D7D;">
+            <i data-lucide="alert-triangle" class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: #F97D7D;"></i>
+            <div class="flex-1">
+                <div id="walking-agent-alert-title" class="text-h2 text-primary"></div>
+                <div id="walking-agent-alert-detail" class="text-caption text-secondary mt-1"></div>
+            </div>
+            <button onclick="document.getElementById('walking-agent-alert').classList.add('hidden')" class="text-secondary hover:text-primary">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+    </div>
+
+    <div id="app" class="max-w-md mx-auto min-h-screen relative flex flex-col pt-5 px-5 gap-6">
+        <!-- Content gets injected here -->
+    </div>
+    
+    <!-- Test Disorientation Button -->
+    <button onclick="simulateDisorientation()" class="fixed bottom-24 right-4 bg-red-500 hover:bg-red-600 text-white p-3 rounded-full shadow-lg z-50 flex items-center justify-center transition-transform active:scale-95" title="Simulate Disorientation">
+        <i data-lucide="activity" class="w-6 h-6"></i>
+    </button>
+    
+    <!-- Bottom Nav -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-surface border-t border-card flex justify-around items-center h-20 max-w-md mx-auto z-50">
+        <button class="flex flex-col items-center justify-center w-20 h-12 text-primary" onclick="navigate('home')">
+            <i data-lucide="home" class="w-6 h-6 mb-1"></i>
+            <span class="text-caption font-semibold">Home</span>
+        </button>
+        <button class="flex flex-col items-center justify-center w-20 h-12 text-secondary hover:text-primary transition-colors" onclick="navigate('routes')">
+            <i data-lucide="map" class="w-6 h-6 mb-1"></i>
+            <span class="text-caption">Navigate</span>
+        </button>
+        <button class="flex flex-col items-center justify-center w-20 h-12 text-secondary hover:text-primary transition-colors" onclick="navigate('history')">
+            <i data-lucide="clock" class="w-6 h-6 mb-1"></i>
+            <span class="text-caption">History</span>
+        </button>
+        <button class="flex flex-col items-center justify-center w-20 h-12 text-secondary hover:text-primary transition-colors" onclick="navigate('logs')">
+            <i data-lucide="scroll-text" class="w-6 h-6 mb-1"></i>
+            <span class="text-caption">Logs</span>
+        </button>
+    </nav>
+
+    <script>
+        const API_HOSTNAME = window.location.hostname || '127.0.0.1';
+        const WALKING_AGENT_PORT = 8003; // Walking Identification Agent's own service, separate from the Routing Agent (8000)
+
+        // ── Walking Identification Agent integration ──────────────────────
+        // Added separately from the rest of this file's logic - only called
+        // once a real session_id exists (after /api/route-request succeeds).
+        // Failure here (agent not running, etc.) is caught and logged, never
+        // breaks the main routing/navigation flow above it.
+        let walkingAgentSocket = null;
+        let walkingAgentWatchId = null;
+
+        function showWalkingAgentAlert(data) {
+            const causeLabels = {
+                obstruction: '⚠️ Obstruction detected',
+                bad_weather: '🌧️ Bad weather detected',
+                disoriented: '🧭 You may be off track',
+            };
+            const detail = typeof data.detail === 'object' ? JSON.stringify(data.detail) : data.detail;
+            document.getElementById('walking-agent-alert-title').textContent = causeLabels[data.cause] || data.cause;
+            document.getElementById('walking-agent-alert-detail').textContent = detail;
+            document.getElementById('walking-agent-alert').classList.remove('hidden');
+        }
+
+        function startWalkingAgent(sessionId, waypointId) {
+            fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId, waypoint_id: waypointId || null }),
+            }).catch(e => console.warn('Walking agent not reachable (non-fatal):', e));
+
+            try {
+                walkingAgentSocket = new WebSocket(`ws://${API_HOSTNAME}:${WALKING_AGENT_PORT}/ws/${sessionId}`);
+                walkingAgentSocket.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.event === 'walking_agent_alert') showWalkingAgentAlert(msg.data);
+                };
+                walkingAgentSocket.onerror = () => console.warn('Walking agent WebSocket error (non-fatal)');
+            } catch (e) {
+                console.warn('Could not open walking agent WebSocket (non-fatal):', e);
+            }
+
+            // Feed real GPS into the agent as it becomes available. Heading/pace
+            // aren't available from the browser Geolocation API alone, so
+            // reasonable defaults are sent - swap for real device sensor data
+            // once available (e.g. from a companion mobile app).
+            if (navigator.geolocation && navigator.geolocation.watchPosition) {
+                walkingAgentWatchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/sensor-tick`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: sessionId,
+                                lat: position.coords.latitude,
+                                lon: position.coords.longitude,
+                                heading_deg: position.coords.heading || 0,
+                                steps_per_minute: 95, // placeholder - no real pace sensor available in-browser
+                                timestamp: Date.now() / 1000,
+                            }),
+                        }).catch(() => {}); // non-fatal - don't spam console on every tick
+                    },
+                    (err) => console.warn('Geolocation watch error (non-fatal):', err),
+                    { enableHighAccuracy: true, maximumAge: 5000 }
+                );
+            }
+        }
+        
+        window.simulateDisorientation = function() {
+            if (!window.currentRouteData || !window.currentRouteData.session_id) return;
+            console.log("Simulating disorientation...");
+            let i = 0;
+            const simInterval = setInterval(() => {
+                if (i >= 5) {
+                    clearInterval(simInterval);
+                    return;
+                }
+                fetch(`http://${API_HOSTNAME}:${WALKING_AGENT_PORT}/journey/sensor-tick`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: window.currentRouteData.session_id,
+                        lat: 1.296568,
+                        lon: 103.852119,
+                        heading_deg: (i * 90) % 360, // Simulate turning in a circle
+                        steps_per_minute: 95,
+                        timestamp: Date.now() / 1000,
+                    }),
+                }).catch(() => {});
+                i++;
+            }, 1000); // 1 tick per second for 5 seconds
+        };
+        // ── End Walking Identification Agent integration ──────────────────
+
+        lucide.createIcons();
+        
+        function useCurrentLocation() {
+            const input = document.getElementById('from-input');
+            if(input) input.value = 'Current Location';
+        }
+
+        function renderHome() {
+            return `
+                <div class="flex flex-col gap-6 w-full">
+                    <h1 class="text-h1 mt-4 text-primary">Noqta</h1>
+                    
+                    <div class="flex flex-col gap-3 w-full">
+                        <div class="relative w-full flex items-center">
+                            <input id="from-input" type="text" class="input-base pr-10" placeholder="Where from?" value="Current Location">
+                            <button class="absolute right-2 text-info-cyan hover:text-white" onclick="useCurrentLocation()">
+                                <i data-lucide="crosshair" class="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        <div class="relative w-full">
+                            <input id="search-input" type="text" class="input-base pr-12" placeholder="Where do you want to go?" onkeypress="handleSearch(event)">
+                            <button class="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center text-primary rounded-full hover:bg-card-hover" onclick="startVoiceSearch()">
+                                <i id="mic-icon" data-lucide="mic" class="w-5 h-5 transition-colors"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-4 mt-2">
+                        <h2 class="text-h2 text-secondary">Recent Destinations</h2>
+                        <div class="flex flex-col bg-card rounded-md">
+                            <button class="flex items-center gap-4 p-4 text-left border-b border-card-hover hover:bg-card-hover active:bg-surface" onclick="navigate('routes', 'SMU Connexion')">
+                                <i data-lucide="map-pin" class="text-secondary w-5 h-5"></i>
+                                <div>
+                                    <div class="text-body text-primary font-medium">SMU Connexion</div>
+                                    <div class="text-body-subtle text-secondary">Singapore Management University</div>
+                                </div>
+                            </button>
+                            <button class="flex items-center gap-4 p-4 text-left border-b border-card-hover hover:bg-card-hover" onclick="navigate('routes', 'Clementi MRT Station')">
+                                <i data-lucide="map-pin" class="text-secondary w-5 h-5"></i>
+                                <div>
+                                    <div class="text-body text-primary font-medium">Clementi MRT Station</div>
+                                    <div class="text-body-subtle text-secondary">East West Line</div>
+                                </div>
+                            </button>
+                            <button class="flex items-center gap-4 p-4 text-left hover:bg-card-hover" onclick="navigate('routes', 'National Library')">
+                                <i data-lucide="map-pin" class="text-secondary w-5 h-5"></i>
+                                <div>
+                                    <div class="text-body text-primary font-medium">National Library</div>
+                                    <div class="text-body-subtle text-secondary">100 Victoria St</div>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card bg-gradient-turquoise border-none shadow-card-big mt-2 text-white">
+                        <div class="flex justify-between items-start mb-2">
+                            <h3 class="text-card-title text-white">Your average pace</h3>
+                            <i data-lucide="activity" class="text-white/80 w-5 h-5"></i>
+                        </div>
+                        <div class="flex items-end gap-2 mb-2 font-mono">
+                            <span class="text-display text-white">79</span>
+                            <span class="text-body-subtle text-white/80 mb-1">steps/min</span>
+                        </div>
+                        <div class="text-body-subtle text-white/80 mb-4 font-mono">0.82 m/s</div>
+                        <div class="text-caption text-white/80">14 journeys recorded</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        let currentDestination = 'SMU Connexion';
+
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        let routeSocket = null;
+
+        function renderRoutes(context) {
+            const destination = typeof context === 'string' ? context : (context?.to || currentDestination);
+            const origin = typeof context === 'string' ? 'Current Location' : (context?.from || 'Current Location');
+            currentDestination = destination;
+            
+            const sessionId = generateUUID();
+
+            if (routeSocket) {
+                routeSocket.close();
+            }
+            routeSocket = new WebSocket(`ws://${API_HOSTNAME}:8000/ws/${sessionId}`);
+            
+            routeSocket.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                console.log("WebSocket event:", msg);
+                if (msg.event === 'route_locked') {
+                    window.currentRouteData = msg.data;
+                    // Introduce a 30s delay to allow the user to see the tabs and 
+                    // prepare the phone for the vision agent before auto-navigating.
+                    setTimeout(() => {
+                        navigate('navigating', currentDestination);
+                    }, 30000); // 30,000 ms = 30 seconds
+                } else if (msg.event === 'candidates_generated') {
+                    updateRouteCardsBase(msg.data.routes);
+                } else if (msg.event === 'accessibility_scored') {
+                    updateRouteCardsAccessibility(msg.data.routes);
+                } else if (msg.event === 'eta_estimated') {
+                    updateRouteCardsETA(msg.data.routes);
+                } else if (msg.event === 'instruction_update') {
+                    if (window.currentRouteData) {
+                        window.currentRouteData.first_instruction = msg.data.instruction;
+                        // Restart karaoke with the new instruction
+                        if (document.getElementById('karaoke-text')) {
+                            startKaraoke();
+                        }
+                    }
+                }
+            };
+
+            let requestSent = false;
+            function sendRouteRequest(lat, lon) {
+                if (requestSent) return;
+                requestSent = true;
+                const body = {
+                    session_id: sessionId,
+                    origin_label: origin,
+                    destination_label: destination,
+                    user_id: "demo-session-001"
+                };
+                if (lat && lon) {
+                    body.origin_lat = lat;
+                    body.origin_lon = lon;
+                }
+                
+                console.log("Sending API request to:", `http://${API_HOSTNAME}:8000/api/route-request`, body);
+                
+                fetch(`http://${API_HOSTNAME}:8000/api/route-request`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                })
+                .then(res => {
+                    console.log("API response status:", res.status);
+                    return res.json();
+                })
+                .then(data => {
+                    console.log("API response data:", data);
+                    if (data.status === 'locked') {
+                        window.currentRouteData = data;
+                        startWalkingAgent(data.session_id, data.locked_route_id);
+                    }
+                })
+                .catch(e => console.error("API error", e));
+            }
+
+            if (origin === 'Current Location') {
+                if (navigator.geolocation) {
+                    const fallbackTimer = setTimeout(() => {
+                        console.warn("Geolocation hard timeout, falling back");
+                        sendRouteRequest(1.296568, 103.852119);
+                    }, 3000);
+
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            clearTimeout(fallbackTimer);
+                            sendRouteRequest(position.coords.latitude, position.coords.longitude);
+                        },
+                        (error) => {
+                            clearTimeout(fallbackTimer);
+                            console.error("Geolocation error:", error);
+                            // Fallback to a default location (e.g. near SMU)
+                            sendRouteRequest(1.296568, 103.852119);
+                        },
+                        { timeout: 2500 }
+                    );
+                } else {
+                    sendRouteRequest(1.296568, 103.852119);
+                }
+            } else {
+                sendRouteRequest(null, null);
+            }
+
+            return `
+                <div class="flex flex-col gap-4 w-full h-full flex-grow pb-24">
+                    <div class="flex items-center justify-between mt-2">
+                        <button class="flex items-center gap-2 text-secondary hover:text-primary w-fit -ml-2 p-2 transition-colors" onclick="navigate('home')">
+                            <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                            <span class="text-body font-medium">Back</span>
+                        </button>
+                    </div>
+                    
+                    <h1 class="text-display mb-2">Routes to ${destination}</h1>
+                    
+                    <div id="route-cards-container" class="flex overflow-x-auto gap-6 pb-6 snap-x snap-mandatory hide-scrollbar -mx-5 px-5 flex-grow items-stretch">
+                        <div class="flex items-center justify-center w-full py-10">
+                            <div class="animate-pulse flex flex-col items-center">
+                                <i data-lucide="loader" class="w-8 h-8 text-info-cyan animate-spin mb-4"></i>
+                                <span class="text-body text-secondary">Finding routes...</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex justify-center gap-2 mt-auto pb-4">
+                        <div class="w-2.5 h-2.5 rounded-full bg-info-cyan shadow-[0_0_8px_#0D8091]"></div>
+                        <div class="w-2.5 h-2.5 rounded-full bg-card-hover border border-card"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateRouteCardsBase(routes) {
+            const container = document.getElementById('route-cards-container');
+            if (!container) return;
+            
+            let html = '';
+            routes.forEach((route, index) => {
+                const isFirst = index === 0;
+                html += `
+                    <div id="route-card-${route.id}" class="card shrink-0 w-[85vw] max-w-[320px] snap-center border ${isFirst ? 'border-info-cyan/30' : 'border-card-hover'} bg-card flex flex-col justify-between shadow-card-big rounded-xl">
+                        <div class="flex flex-col flex-grow">
+                            <div class="flex justify-between items-start mb-2">
+                                <div class="text-h1">Route ${index + 1}</div>
+                                <div id="eta-${route.id}" class="text-h1 text-secondary font-mono animate-pulse">--<span class="text-body">min</span></div>
+                            </div>
+                            
+                            <div class="text-caption text-secondary font-mono mb-4 bg-surface p-2 rounded-md border border-card-hover">
+                                ${route.summary}
+                            </div>
+                            
+                            <div id="acc-${route.id}" class="flex items-center gap-3 mb-6 bg-surface p-3 rounded-lg border border-card-hover">
+                                <span class="text-body-subtle text-secondary animate-pulse">Scoring accessibility...</span>
+                            </div>
+                            
+                            <div id="acc-details-${route.id}" class="flex flex-col gap-4 mt-2 flex-grow">
+                            </div>
+                        </div>
+                        <button class="btn ${isFirst ? 'bg-gradient-turquoise text-white shadow-[0_4px_15px_rgba(13,128,145,0.4)]' : 'btn-secondary bg-surface border-card-hover text-primary'} hover:opacity-90 btn-lg mt-6 w-full text-lg" onclick="navigate('navigating', '${currentDestination}')">Start Route ${index + 1}</button>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        function updateRouteCardsAccessibility(routes) {
+            routes.forEach(route => {
+                const accBox = document.getElementById(`acc-${route.id}`);
+                const accDetails = document.getElementById(`acc-details-${route.id}`);
+                if (!accBox || !accDetails) return;
+                
+                const score = Math.round(route.score * 100);
+                const isHigh = score > 80;
+                const isMid = score > 50 && score <= 80;
+                
+                let chipClass = 'chip-neutral bg-card-hover';
+                let accLabel = 'Moderate';
+                if (isHigh) { chipClass = 'chip-info'; accLabel = 'Highly accessible'; }
+                else if (!isMid && !isHigh) { chipClass = 'chip-warning'; accLabel = 'Caution'; }
+                
+                accBox.innerHTML = `
+                    <span class="chip ${chipClass} font-bold text-sm px-3 py-1">${score} / 100</span>
+                    <span class="text-body font-medium text-primary">${accLabel}</span>
+                `;
+                
+                let detailsHtml = '';
+
+                // 1. Step-free
+                const isStepFree = route.step_free;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${isStepFree ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${isStepFree ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Step-free</div>
+                            <div class="text-caption text-secondary">${isStepFree ? 'No stairs required' : 'Stairs present on route'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 2. Tactile paving
+                const hasTactile = route.tactile_paving;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${hasTactile ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${hasTactile ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Tactile paving</div>
+                            <div class="text-caption text-secondary">${hasTactile ? 'Present on main paths' : 'Not available on route'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 3. Lighting
+                const goodLighting = route.lighting === 'GOOD';
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${goodLighting ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${goodLighting ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Lighting</div>
+                            <div class="text-caption text-secondary">${goodLighting ? 'Well-lit paths' : 'Poor or unknown lighting'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 4. Obstruction risk
+                const lowObstruction = route.obstruction_risk <= 0.3;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${lowObstruction ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${lowObstruction ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Obstruction risk</div>
+                            <div class="text-caption text-secondary">${lowObstruction ? 'Clear pathways' : 'High obstruction risk'}</div>
+                        </div>
+                    </div>
+                `;
+
+                // 5. Crowding estimate
+                const lowCrowding = route.crowding_estimate <= 0.5;
+                detailsHtml += `
+                    <div class="flex items-start gap-3 text-body">
+                        <div class="mt-0.5"><i data-lucide="${lowCrowding ? 'check-circle-2' : 'x-circle'}" class="w-5 h-5 ${lowCrowding ? 'text-positive' : 'text-negative'}"></i></div>
+                        <div>
+                            <div class="text-primary font-medium">Crowding</div>
+                            <div class="text-caption text-secondary">${lowCrowding ? 'Not crowded' : 'High foot traffic expected'}</div>
+                        </div>
+                    </div>
+                `;
+                accDetails.innerHTML = detailsHtml;
+            });
+            lucide.createIcons();
+        }
+
+        function updateRouteCardsETA(routes) {
+            routes.forEach((route, index) => {
+                const etaBox = document.getElementById(`eta-${route.id}`);
+                if (!etaBox) return;
+                
+                const isFirst = index === 0;
+                const min = Math.round(route.estimated_duration_s / 60);
+                
+                etaBox.className = `text-h1 ${isFirst ? 'text-info-cyan' : 'text-primary'} font-mono`;
+                etaBox.innerHTML = `${min}<span class="text-body">min</span>`;
+            });
+        }
+
+        let pollingInterval = null;
+
+        async function checkBusStatus() {
+            try {
+                const response = await fetch(`http://${API_HOSTNAME}:8004/agent/check-bus`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        journey: {
+                            user_id: "demo-session-001",
+                            bus_stop_code: "01012",
+                            expected_bus: "176",
+                            destination: "SMU",
+                            original_eta_minutes: 3
+                        },
+                        demo_scenario: "on_time"
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    const statusText = document.getElementById('bus-status-text');
+                    const instructionText = document.getElementById('bus-instruction-text');
+                    const busIcon = document.getElementById('bus-status-icon');
+                    const busBg = document.getElementById('bus-status-bg');
+                    
+                    if (statusText) {
+                        statusText.innerText = data.reason_code;
+                    }
+                    if (instructionText) {
+                        instructionText.innerText = data.spoken_instruction || 'Scanning for vehicle...';
+                    }
+                    
+                    if (data.action === 'BOARD') {
+                        if (busIcon) busIcon.className = "w-4 h-4 text-success";
+                        if (busIcon) busIcon.setAttribute("data-lucide", "check-circle");
+                        if (busBg) {
+                            busBg.classList.remove('text-tertiary');
+                            busBg.classList.add('text-success');
+                        }
+                        lucide.createIcons();
+                        if (pollingInterval) clearInterval(pollingInterval);
+                    } else if (data.action === 'IGNORE_BUS') {
+                        if (busIcon) busIcon.className = "w-4 h-4 text-warning";
+                        if (busIcon) busIcon.setAttribute("data-lucide", "alert-triangle");
+                        if (busBg) {
+                            busBg.classList.remove('text-tertiary');
+                            busBg.classList.add('text-warning');
+                        }
+                        lucide.createIcons();
+                    } else if (data.action === 'REROUTE') {
+                        if (busIcon) busIcon.className = "w-4 h-4 text-error";
+                        if (busIcon) busIcon.setAttribute("data-lucide", "x-circle");
+                        if (busBg) {
+                            busBg.classList.remove('text-tertiary');
+                            busBg.classList.add('text-error');
+                        }
+                        lucide.createIcons();
+                        if (pollingInterval) clearInterval(pollingInterval);
+                    }
+                }
+            } catch (err) {
+                console.error("Bus check failed", err);
+            }
+        }
+
+        function startCamera() {
+            const video = document.getElementById('camera-feed');
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia && video) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+                    .then(stream => {
+                        video.srcObject = stream;
+                    })
+                    .catch(err => {
+                        console.error('Camera access denied or unavailable:', err);
+                    });
+            }
+        }
+
+        function renderNavigating(destination = currentDestination) {
+            setTimeout(() => {
+                checkBusStatus();
+                if (pollingInterval) clearInterval(pollingInterval);
+                pollingInterval = setInterval(checkBusStatus, 5000);
+                startCamera();
+            }, 100);
+
+            return `
+                <div class="flex flex-col gap-4 w-full h-full flex-grow relative pb-20">
+                    <div class="flex justify-between items-center bg-card p-lg rounded-md shadow-tile">
+                        <div>
+                            <div class="text-body font-bold text-primary">To ${destination}</div>
+                            <div class="text-body-subtle text-secondary font-mono">14 min remaining</div>
+                        </div>
+                        <span class="chip chip-success">
+                            <i data-lucide="navigation" class="w-4 h-4"></i> Active
+                        </span>
+                    </div>
+
+                    <div id="karaoke-container" class="bg-surface rounded-md p-lg border border-info-cyan/30 shadow-[0_0_15px_rgba(13,128,145,0.15)] min-h-[100px] flex items-center justify-center">
+                        <p id="karaoke-text" class="text-h2 text-secondary leading-relaxed w-full text-center">
+                            Loading instruction...
+                        </p>
+                    </div>
+
+                    <!-- Landmark Verification Agent (Camera Preview) -->
+                    <div class="relative w-full h-64 bg-[#020617] rounded-md overflow-hidden border border-info-cyan shadow-card-big mt-2">
+                        <video id="camera-feed" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0 opacity-70"></video>
+                        <img id="vision-annotated-stream" class="absolute inset-0 w-full h-full object-cover z-10 hidden" />
+                        
+                        <!-- Vision Guidance Text Overlay -->
+                        <div class="absolute bottom-4 left-4 right-4 z-30 hidden bg-black/70 p-2 rounded-md border border-warning">
+                            <p id="vision-guidance-text" class="text-warning text-sm font-bold text-center"></p>
+                        </div>
+
+                        <!-- Scanner Line Effect (Removed per user request) -->
+                        
+                        <!-- HUD Elements -->
+                        <div class="absolute top-3 left-3 flex gap-1 z-10">
+                            <div class="w-4 h-4 border-t-2 border-l-2 border-info-cyan"></div>
+                        </div>
+                        <div class="absolute top-3 right-3 flex gap-1 z-10">
+                            <div class="w-4 h-4 border-t-2 border-r-2 border-info-cyan"></div>
+                        </div>
+                        <div class="absolute bottom-3 left-3 flex gap-1 z-10">
+                            <div class="w-4 h-4 border-b-2 border-l-2 border-info-cyan"></div>
+                        </div>
+                        <div class="absolute bottom-3 right-3 flex gap-1 z-10">
+                            <div class="w-4 h-4 border-b-2 border-r-2 border-info-cyan"></div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-3 mt-2">
+                        <!-- State & Safety Agent Alert -->
+                        <div class="bg-gradient-pink rounded-md p-lg flex gap-4 items-start shadow-tile text-white">
+                            <div class="mt-1"><i data-lucide="shield-alert" class="w-6 h-6 text-white"></i></div>
+                            <div class="flex flex-col gap-1 w-full">
+                                <div class="text-body font-bold text-white">Safety Alert</div>
+                                <div class="text-body-subtle text-white/90">Low speed detected. Handrail located 3 steps to your right to re-orient.</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Transit Orchestrator -->
+                        <div class="bg-card rounded-md p-lg flex gap-4 items-start shadow-tile">
+                            <div class="mt-1"><i data-lucide="bus" class="w-6 h-6 text-primary"></i></div>
+                            <div class="flex flex-col gap-1 w-full">
+                                <div class="flex justify-between items-center w-full">
+                                    <div class="text-body font-bold text-primary">BUS 176</div>
+                                    <div class="text-body text-info-cyan font-mono">In 3 min</div>
+                                </div>
+                                <div id="bus-status-bg" class="text-body-subtle text-secondary flex items-center gap-2 mt-1">
+                                    <i id="bus-status-icon" data-lucide="scan-line" class="w-4 h-4"></i> 
+                                    <span id="bus-status-text" class="font-bold uppercase tracking-wider">SCANNING</span> - 
+                                    <span id="bus-instruction-text">Scanning for vehicle...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-destructive btn-lg w-full mt-4" onclick="navigate('summary')">End Navigation</button>
+                </div>
+            `;
+        }
+
+        function renderHistory() {
+            return `
+                <div class="flex flex-col gap-6 w-full">
+                    <h1 class="text-h1 mt-4">History & Memory</h1>
+                    
+                    <div class="flex flex-col gap-4">
+                        <h2 class="text-h2 text-secondary">Spatial Memories</h2>
+                        
+                        <div class="card bg-gradient-pink border-none shadow-card-big text-white">
+                            <div class="flex justify-between items-start mb-2">
+                                <div class="text-card-title font-bold text-white">Remembered obstacle</div>
+                                <span class="chip chip-info text-[10px] bg-white text-info-cyan font-bold">High Relevance</span>
+                            </div>
+                            <div class="text-h2 mb-2 text-white">Construction barrier</div>
+                            <div class="text-body-subtle text-white/80 flex items-center gap-2">
+                                <i data-lucide="calendar" class="w-4 h-4"></i> Tuesday mornings
+                            </div>
+                            <div class="text-body-subtle text-white/80 flex items-center gap-2 mt-1">
+                                <i data-lucide="map-pin" class="w-4 h-4"></i> 120m ahead on Route 1
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-4 mt-4">
+                        <h2 class="text-h2 text-secondary">Past Journeys</h2>
+                        
+                        <div class="flex flex-col bg-card rounded-md shadow-tile">
+                            <div class="flex items-center justify-between p-lg border-b border-card-hover">
+                                <div>
+                                    <div class="text-body text-primary font-medium">To National Library</div>
+                                    <div class="text-body-subtle text-secondary">Yesterday, 2:15 PM</div>
+                                </div>
+                                <div class="text-body font-semibold text-primary font-mono">22 min</div>
+                            </div>
+                            <div class="flex items-center justify-between p-lg border-b border-card-hover">
+                                <div>
+                                    <div class="text-body text-primary font-medium">To Clementi MRT</div>
+                                    <div class="text-body-subtle text-secondary">Sep 4, 9:00 AM</div>
+                                </div>
+                                <div class="text-body font-semibold text-primary font-mono">15 min</div>
+                            </div>
+                            <div class="flex items-center justify-between p-lg">
+                                <div>
+                                    <div class="text-body text-primary font-medium">To Clinic</div>
+                                    <div class="text-body-subtle text-secondary">Sep 1, 10:30 AM</div>
+                                </div>
+                                <div class="text-body font-semibold text-primary font-mono">45 min</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSummary(destination = currentDestination) {
+            return `
+                <div class="flex flex-col gap-6 w-full h-full flex-grow pb-24">
+                    <div class="text-center mt-8 mb-4">
+                        <div class="w-20 h-20 bg-card rounded-full flex items-center justify-center mx-auto mb-4 border-4 border-positive shadow-[0_0_20px_rgba(127,224,137,0.3)]">
+                            <i data-lucide="check" class="w-10 h-10 text-positive"></i>
+                        </div>
+                        <h1 class="text-display text-primary">Trip Complete!</h1>
+                        <p class="text-body text-secondary mt-2">You have arrived at ${destination}.</p>
+                    </div>
+                    
+                    <div class="card bg-gradient-turquoise text-white shadow-card-big border-none p-6">
+                        <div class="text-card-title mb-4 opacity-90">Journey Stats</div>
+                        <div class="flex justify-between items-end mb-2">
+                            <div>
+                                <div class="text-caption text-white/80 mb-1">Time Elapsed</div>
+                                <div class="text-h1 font-mono">18m 12s</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-caption text-white/80 mb-1">Avg Pace</div>
+                                <div class="text-h1 font-mono">0.83 m/s</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card bg-card flex flex-col gap-4 mt-2 shadow-tile">
+                        <h2 class="text-h2 text-primary">Save to Spatial Memory?</h2>
+                        <p class="text-body-subtle text-secondary">Would you like to favourite this route or add any notes about obstructions you faced?</p>
+                        
+                        <div class="flex gap-4 mt-2">
+                            <button class="btn bg-surface border border-card-hover text-primary hover:bg-card-hover flex-1 py-3" onclick="alert('Saved to favourites!')">
+                                <i data-lucide="star" class="w-5 h-5 mr-2 text-info-cyan"></i> Favourite
+                            </button>
+                            <button class="btn bg-surface border border-card-hover text-primary hover:bg-card-hover flex-1 py-3" onclick="alert('Recording note...')">
+                                <i data-lucide="mic" class="w-5 h-5 mr-2 text-positive"></i> Note
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <button class="btn bg-surface border border-card-hover hover:bg-card-hover text-primary btn-lg w-full mt-auto mb-2" onclick="savePreferences(event)">Sync Preferences</button>
+                    <button class="btn btn-primary btn-lg w-full" onclick="navigate('home')">Done</button>
+                </div>
+            `;
+        }
+
+        async function savePreferences(event) {
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.innerHTML = 'Syncing...';
+            try {
+                await fetch(`http://${API_HOSTNAME}:8001/preferences`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: "user_123",
+                        preferred_pace: 0.83,
+                        avoid_stairs: true,
+                        audio_cues_enabled: true
+                    })
+                });
+                btn.innerHTML = '<i data-lucide="check" class="w-5 h-5 mr-2"></i> Synced to backend';
+                lucide.createIcons();
+            } catch (e) {
+                console.error(e);
+                btn.innerHTML = 'Sync Failed';
+            }
+            setTimeout(() => { btn.innerHTML = originalText; lucide.createIcons(); }, 2000);
+        }
+
+        function renderLogs() {
+            return `
+                <div class="flex flex-col gap-6 w-full h-full bg-surface text-primary -mx-5 -mt-5 p-5 min-h-screen">
+                    <div class="flex justify-between items-center mt-4">
+                        <h1 class="text-h1 font-mono text-primary">System Logs</h1>
+                        <span class="chip chip-warning">MVP Diagnostics</span>
+                    </div>
+                    
+                    <div class="flex flex-col gap-1 font-mono text-body-subtle mt-4 border-l-2 border-card-hover pl-4 ml-2">
+                        <div class="relative pb-6">
+                            <div class="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-positive"></div>
+                            <div class="text-positive font-bold mb-1">Accessible Routing Agent</div>
+                            <div class="text-secondary">✓ Queried OSM: tactile_paving=yes</div>
+                            <div class="text-tertiary text-micro mt-1 font-mono">18:42:01.045</div>
+                        </div>
+                        
+                        <div class="relative pb-6">
+                            <div class="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-positive"></div>
+                            <div class="text-positive font-bold mb-1">Spatial Memory Agent</div>
+                            <div class="text-secondary">✓ Applied avg pace (0.82 m/s) from vector DB</div>
+                            <div class="text-tertiary text-micro mt-1 font-mono">18:42:02.112</div>
+                        </div>
+
+                        <div class="relative pb-6">
+                            <div class="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-negative"></div>
+                            <div class="text-negative font-bold mb-1">State & Safety Agent</div>
+                            <div class="text-secondary">⚠ Low speed detected. Finding anchor (handrail)</div>
+                            <div class="text-tertiary text-micro mt-1 font-mono">18:42:03.111</div>
+                        </div>
+
+                        <div class="relative">
+                            <div class="absolute -left-[23px] top-1 w-3 h-3 rounded-full bg-info-cyan animate-pulse"></div>
+                            <div class="text-info-cyan font-bold mb-1">Transit Orchestrator Agent</div>
+                            <div class="text-primary">API mismatch: Validating via Camera...</div>
+                            <div class="text-tertiary text-micro mt-1 font-mono">18:42:03.500</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateNav(page) {
+            const navItems = document.querySelectorAll('nav button');
+            navItems.forEach(btn => {
+                btn.classList.remove('text-primary');
+                btn.classList.add('text-secondary');
+                btn.querySelector('span').classList.remove('font-semibold');
+            });
+            
+            // Highlight current
+            let currentBtnIndex = 0;
+            if (page === 'routes' || page === 'navigating' || page === 'summary') currentBtnIndex = 1;
+            else if (page === 'history') currentBtnIndex = 2;
+            else if (page === 'logs') currentBtnIndex = 3;
+
+            const currentBtn = navItems[currentBtnIndex];
+            if (currentBtn) {
+                currentBtn.classList.remove('text-secondary');
+                currentBtn.classList.add('text-primary');
+                currentBtn.querySelector('span').classList.add('font-semibold');
+            }
+        }
+
+        let cameraStream = null;
+        let visionWs = null;
+        let visionCaptureInterval = null;
+
+        async function startCamera() {
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error("Camera API not available! Are you missing the Chrome bypass flag, or using HTTP instead of HTTPS?");
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                cameraStream = stream;
+                const videoElement = document.getElementById('camera-feed');
+                if (videoElement) {
+                    videoElement.srcObject = stream;
+                    videoElement.play().catch(e => console.warn('Video play blocked:', e));
+
+                    // Setup Vision WebSocket and Canvas
+                    const routeSessionId = window.currentRouteData?.session_id || 'demo-session-001';
+                    // We must use ws:// if http:// or wss:// if https://
+                    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    visionWs = new WebSocket(`${wsProtocol}//${API_HOSTNAME}:8000/ws/vision-stream/${routeSessionId}`);
+                    
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    visionWs.onopen = () => {
+                        console.log("Vision WebSocket Connected");
+                        const guidanceEl = document.getElementById('vision-guidance-text');
+                        if (guidanceEl) {
+                            guidanceEl.innerText = "Vision System Connected!";
+                            guidanceEl.parentElement.classList.remove('hidden');
+                        }
+                        visionCaptureInterval = setInterval(() => {
+                            if (videoElement.videoWidth && videoElement.videoHeight) {
+                                canvas.width = videoElement.videoWidth;
+                                canvas.height = videoElement.videoHeight;
+                                ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                                
+                                // Send as medium quality JPEG
+                                const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+                                if (visionWs.readyState === WebSocket.OPEN) {
+                                    visionWs.send(dataUrl);
+                                }
+                            }
+                        }, 500); // 2 FPS to save bandwidth
+                    };
+                    
+                    visionWs.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        const imgEl = document.getElementById('vision-annotated-stream');
+                        const guidanceEl = document.getElementById('vision-guidance-text');
+                        
+                        if (imgEl && data.image) {
+                            imgEl.src = data.image;
+                            imgEl.classList.remove('hidden');
+                        }
+                        
+                        if (guidanceEl && data.guidance !== undefined) {
+                            guidanceEl.innerText = data.guidance;
+                            if (data.guidance !== '') {
+                                guidanceEl.parentElement.classList.remove('hidden');
+                            } else {
+                                // Keep it hidden if no guidance
+                            }
+                        }
+                    };
+                    
+                    visionWs.onclose = () => {
+                        console.log("Vision WebSocket Closed");
+                    };
+                }
+            } catch (err) {
+                console.error("Camera access denied or unavailable", err);
+                const guidanceEl = document.getElementById('vision-guidance-text');
+                if (guidanceEl) {
+                    guidanceEl.innerText = `Camera Error: ${err.message}`;
+                    guidanceEl.parentElement.classList.remove('hidden');
+                }
+            }
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            if (visionCaptureInterval) {
+                clearInterval(visionCaptureInterval);
+                visionCaptureInterval = null;
+            }
+            if (visionWs) {
+                visionWs.close();
+                visionWs = null;
+            }
+            const imgEl = document.getElementById('vision-annotated-stream');
+            if (imgEl) {
+                imgEl.classList.add('hidden');
+            }
+            const guidanceEl = document.getElementById('vision-guidance-text');
+            if (guidanceEl) {
+                guidanceEl.innerText = '';
+                guidanceEl.parentElement.classList.add('hidden');
+            }
+        }
+
+        function navigate(page, context = null) {
+            const app = document.getElementById('app');
+            let html = '';
+            
+            // Clean up intervals and camera before leaving view
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+            if (window.karaokeInterval) {
+                clearInterval(window.karaokeInterval);
+                window.karaokeInterval = null;
+            }
+            stopCamera();
+
+            // Scroll to top
+            window.scrollTo(0, 0);
+
+            if (page === 'home') html = renderHome();
+            else if (page === 'routes') html = renderRoutes(context || currentDestination);
+            else if (page === 'summary') html = renderSummary(context || currentDestination);
+            else if (page === 'navigating') {
+                html = renderNavigating(context || currentDestination);
+                startCamera(); // Must be called synchronously to preserve user gesture
+                setTimeout(() => {
+                    startKaraoke();
+                    
+                    // Auto-trigger vision agent for this demo session
+                    const routeSessionId = window.currentRouteData?.session_id || 'demo-session-001';
+                    fetch(`http://${API_HOSTNAME}:8000/api/sessions/${routeSessionId}/vision-assist`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            waypoint_id: 'demo-waypoint',
+                            user_distance_m: 5.0,
+                            context: 'auto-trigger'
+                        })
+                    }).catch(err => console.error("Vision assist trigger failed:", err));
+                }, 100); // Start camera, karaoke, and vision-assist after DOM injection
+            }
+            else if (page === 'history') html = renderHistory();
+            else if (page === 'logs') html = renderLogs();
+            else html = renderHome();
+
+            app.innerHTML = html;
+            lucide.createIcons();
+            updateNav(page);
+        }
+
+        // Set initial state
+        navigate('home');
+
+        function handleSearch(event) {
+            if (event.key === 'Enter') {
+                const toVal = event.target.value.trim();
+                const fromInput = document.getElementById('from-input');
+                const fromVal = fromInput ? fromInput.value.trim() || 'Current Location' : 'Current Location';
+                if (toVal) {
+                    navigate('routes', { to: toVal, from: fromVal });
+                }
+            }
+        }
+
+        function startVoiceSearch() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                alert('Voice search is not supported in this browser. Please type your destination.');
+                return;
+            }
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            const searchInput = document.getElementById('search-input');
+            const micIcon = document.getElementById('mic-icon');
+            
+            recognition.onstart = function() {
+                searchInput.placeholder = "Listening...";
+                micIcon.classList.remove('text-primary');
+                micIcon.classList.add('text-negative', 'animate-pulse'); // turn red
+            };
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                searchInput.value = transcript;
+                const fromInput = document.getElementById('from-input');
+                const fromVal = fromInput ? fromInput.value.trim() || 'Current Location' : 'Current Location';
+                setTimeout(() => {
+                    navigate('routes', { to: transcript, from: fromVal });
+                }, 1000);
+            };
+
+            recognition.onerror = function(event) {
+                console.error("Speech recognition error", event.error);
+                searchInput.placeholder = "Where do you want to go?";
+                micIcon.classList.remove('text-negative', 'animate-pulse');
+                micIcon.classList.add('text-primary');
+            };
+            
+            recognition.onend = function() {
+                searchInput.placeholder = "Where do you want to go?";
+                micIcon.classList.remove('text-negative', 'animate-pulse');
+                micIcon.classList.add('text-primary');
+            }
+
+            recognition.start();
+        }
+        window.karaokeInterval = null;
+        function startKaraoke() {
+            if (window.karaokeInterval) clearInterval(window.karaokeInterval);
+            
+            const instruction = window.currentRouteData?.first_instruction || (window.currentRouteData?.micro_instructions?.[0]) || "Walk straight until you feel the raised tactile dots underfoot.";
+            const words = instruction.split(' ');
+            const container = document.getElementById('karaoke-text');
+            if (!container) return;
+            
+            let html = '';
+            words.forEach((word, idx) => {
+                html += `<span id="k-word-${idx}" class="transition-all duration-200 inline-block mx-[2px] text-secondary">${word}</span> `;
+            });
+            container.innerHTML = html;
+            
+            let currentIndex = 0;
+            window.karaokeInterval = setInterval(() => {
+                // Reset previous
+                if (currentIndex > 0) {
+                    const prev = document.getElementById(`k-word-${currentIndex - 1}`);
+                    if (prev) {
+                        prev.className = "transition-all duration-200 inline-block mx-[2px] text-primary";
+                    }
+                }
+                
+                // Set current
+                if (currentIndex < words.length) {
+                    const curr = document.getElementById(`k-word-${currentIndex}`);
+                    if (curr) {
+                        curr.className = "transition-all duration-200 inline-block mx-[2px] text-white font-bold scale-110 drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]";
+                    }
+                    currentIndex++;
+                } else {
+                    // Loop back
+                    currentIndex = 0;
+                    words.forEach((w, idx) => {
+                        const el = document.getElementById(`k-word-${idx}`);
+                        if(el) el.className = "transition-all duration-200 inline-block mx-[2px] text-secondary";
+                    });
+                }
+            }, 400);
+        }
+    </script>
+</body>
+</html>
