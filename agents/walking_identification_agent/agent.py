@@ -43,7 +43,6 @@ class StateSafetyAgent:
         self._last_alert_at: dict = {}  # cause.value -> last timestamp fired
         self.session_id: Optional[str] = None
         self.current_waypoint_id: Optional[str] = None
-        self.ws_broadcast = None
 
     # -- lifecycle -----------------------------------------------------
 
@@ -109,71 +108,7 @@ class StateSafetyAgent:
         if result is None:
             return  # false alarm - stay quiet, cooldown still applies
 
-        if self.ws_broadcast:
-            self.ws_broadcast({
-                "event": "walking_agent_alert",
-                "data": {
-                    "cause": result.cause.value,
-                    "detail": result.detail
-                }
-            })
-
-        # Generate spoken text for the local audio alert
-        spoken_text = "Please check your surroundings."
-        if isinstance(result.detail, dict):
-            spoken_text = result.detail.get("description", spoken_text)
-        elif isinstance(result.detail, str):
-            spoken_text = result.detail
-            
-        alert_msg = f"Alert. {spoken_text}"
-        self._play_audio_alert(alert_msg)
-
         self._reroute(result.cause, result.detail, reading)
-
-    # -- local audio playback ------------------------------------------------
-
-    def _play_audio_alert(self, text: str):
-        """Plays a notification sound followed by Polly TTS locally on the Mac."""
-        import asyncio
-        import os
-        import tempfile
-        import boto3
-        
-        # Avoid playing over each other if alerts come in quickly
-        if getattr(self, '_is_playing_audio', False):
-            return
-        self._is_playing_audio = True
-        
-        async def _play():
-            try:
-                # Play a ping/haptic alert immediately
-                ping_proc = await asyncio.create_subprocess_exec("afplay", "/System/Library/Sounds/Glass.aiff")
-                await ping_proc.wait()
-                
-                # Generate TTS
-                polly = boto3.client('polly', region_name='us-east-1')
-                audio_response = polly.synthesize_speech(
-                    Text=text,
-                    OutputFormat='mp3',
-                    VoiceId='Joanna'
-                )
-                audio_bytes = audio_response.get('AudioStream').read() if 'AudioStream' in audio_response else b''
-                if audio_bytes:
-                    tts_path = os.path.join(tempfile.gettempdir(), "walking_alert_tts.mp3")
-                    with open(tts_path, "wb") as f:
-                        f.write(audio_bytes)
-                    warn_proc = await asyncio.create_subprocess_exec("afplay", tts_path)
-                    await warn_proc.wait()
-            except Exception as e:
-                print(f"[State & Safety Agent] Failed to play audio alert: {e}")
-            finally:
-                self._is_playing_audio = False
-                
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_play())
-        except RuntimeError:
-            asyncio.run(_play())
 
     # -- cooldown / anti-nag -------------------------------------------------
 

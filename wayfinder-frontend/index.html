@@ -129,28 +129,9 @@
     </style>
 </head>
 <body class="bg-page text-primary font-sans antialiased pb-20">
-    <!-- Walking Identification Agent - live alert banner (added separately from the main app UI, does not affect existing views) -->
-    <div id="walking-agent-alert" class="fixed top-4 left-4 right-4 max-w-md mx-auto z-50 hidden">
-        <div class="bg-surface border-2 rounded-xl p-4 shadow-lg flex items-start gap-3" style="border-color: #F97D7D;">
-            <i data-lucide="alert-triangle" class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: #F97D7D;"></i>
-            <div class="flex-1">
-                <div id="walking-agent-alert-title" class="text-h2 text-primary"></div>
-                <div id="walking-agent-alert-detail" class="text-caption text-secondary mt-1"></div>
-            </div>
-            <button onclick="document.getElementById('walking-agent-alert').classList.add('hidden')" class="text-secondary hover:text-primary">
-                <i data-lucide="x" class="w-5 h-5"></i>
-            </button>
-        </div>
-    </div>
-
     <div id="app" class="max-w-md mx-auto min-h-screen relative flex flex-col pt-5 px-5 gap-6">
         <!-- Content gets injected here -->
     </div>
-    
-    <!-- Test Disorientation Button -->
-    <button onclick="simulateDisorientation()" class="fixed bottom-24 right-4 bg-red-500 hover:bg-red-600 text-white p-3 rounded-full shadow-lg z-50 flex items-center justify-center transition-transform active:scale-95" title="Simulate Disorientation">
-        <i data-lucide="activity" class="w-6 h-6"></i>
-    </button>
     
     <!-- Bottom Nav -->
     <nav class="fixed bottom-0 left-0 right-0 bg-surface border-t border-card flex justify-around items-center h-20 max-w-md mx-auto z-50">

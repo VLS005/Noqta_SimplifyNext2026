@@ -167,199 +167,106 @@ class VisionAgent:
     # ─── Outbound ─────────────────────────────────────────────────────────────
 
     async def send(self, message: BaseMessage, on_obstruction_callback=None) -> bool:
-        # ---------------------------------------------------------
-        # OLD HARDWARE WEBCAM LOGIC (COMMENTED OUT AS REQUESTED)
-        # ---------------------------------------------------------
-        # import time
-        # import asyncio
-        # import numpy as np
-        #
-        # if not isinstance(message, VisionRequestMessage):
-        #     return False
-        #     
-        # settings = get_settings()
-        # gate_m = settings.vision_proximity_gate_m
-        #
-        # if message.user_distance_m > gate_m:
-        #     raise ProximityGateError(f"Gate {gate_m}m exceeded.")
-        #
-        # if not self.is_moving():
-        #     return False
-        #
-        # if self.api_call_count >= self.MAX_ALLOWED_CALLS:
-        #     raise BudgetExceededError("AWS Safety Limit reached.")
-        #
-        # logger.info("VisionAgent: Starting live session for 30s.")
-        # 
-        # cap = cv2.VideoCapture(0)
-        # if not cap.isOpened():
-        #     logger.error("VisionAgent: Failed to open webcam.")
-        #     return False
-        #
-        # start_time = time.time()
-        # last_api_call = 0
-        # last_labels = []
-        #
-        # try:
-        #     while True:
-        #         ret, frame = cap.read()
-        #         if not ret:
-        #             break
-        #             
-        #         current_time = time.time()
-        #         
-        #         if current_time - start_time > 30:
-        #             logger.info("VisionAgent: 30s timeout reached.")
-        #             break
-        #             
-        #         height, width = frame.shape[:2]
-        #         if height > 720:
-        #             scale = 720 / float(height)
-        #             frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-        #
-        #         # Throttle AWS call to 1 every 3 seconds
-        #         if current_time - last_api_call >= 3.0:
-        #             last_api_call = current_time
-        #             ret_encode, buffer = cv2.imencode('.jpg', frame)
-        #             if ret_encode:
-        #                 self.api_call_count += 1
-        #                 try:
-        #                     loop = asyncio.get_running_loop()
-        #                     response = await loop.run_in_executor(
-        #                         None, 
-        #                         lambda: self.rekognition_client.detect_labels(
-        #                             Image={'Bytes': buffer.tobytes()},
-        #                             MaxLabels=15,
-        #                             MinConfidence=70.0
-        #                         )
-        #                     )
-        #                     last_labels = response.get('Labels', [])
-        #                     
-        #                     if last_labels:
-        #                         guidance_text = self.sectorize_and_guide(last_labels)
-        #                         if "completely clear" not in guidance_text and on_obstruction_callback:
-        #                             # Layer 2: Multimodal analysis
-        #                             system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward and provide directions on how to move away from the obstructions."
-        #                             user_prompt = f"Rekognition Labels: {last_labels}\n\nWhat are the hazards, and what directions should I take to avoid them safely?"
-        #                             try:
-        #                                 deep_context = await self._bedrock.invoke_model(
-        #                                     system_prompt=system_prompt,
-        #                                     user_prompt=user_prompt,
-        #                                     model_tier="nova-pro",
-        #                                     image_bytes=buffer.tobytes()
-        #                                 )
-        #                                 # Pass the rich multimodal response to the callback (Layer 3)
-        #                                 asyncio.create_task(on_obstruction_callback(deep_context))
-        #                             except Exception as bedrock_err:
-        #                                 logger.error(f"VisionAgent: Nova Pro failed, falling back to basic guidance: {bedrock_err}")
-        #                                 asyncio.create_task(on_obstruction_callback(guidance_text))
-        #                 except Exception as e:
-        #                     logger.error(f"Rekognition error: {e}")
-        #
-        #         annotated_frame = self._draw_bounding_boxes(frame.copy(), last_labels)
-        #         cv2.imshow("Live Vision Feedback", annotated_frame)
-        #         
-        #         if cv2.waitKey(1) & 0xFF == ord('q'):
-        #             logger.info("VisionAgent: User quit live session.")
-        #             break
-        #         
-        #         await asyncio.sleep(0.01)
-        #
-        # finally:
-        #     cap.release()
-        #     cv2.destroyAllWindows()
-        #     for _ in range(4):
-        #         cv2.waitKey(1)
-        #     
-        # return True
-        return True
-
-    async def process_frame(self, frame_bytes: bytes, on_obstruction_callback=None) -> tuple[bytes, str]:
-        """
-        Takes a raw JPEG frame from the mobile browser WebSocket, decodes it,
-        runs Rekognition (throttled to 1 call every 3s), draws bounding boxes,
-        and returns the (annotated_jpeg_bytes, guidance_text).
-        """
         import time
         import asyncio
         import numpy as np
 
+        if not isinstance(message, VisionRequestMessage):
+            return False
+            
+        settings = get_settings()
+        gate_m = settings.vision_proximity_gate_m
+
+        if message.user_distance_m > gate_m:
+            raise ProximityGateError(f"Gate {gate_m}m exceeded.")
+
+        if not self.is_moving():
+            return False
+
         if self.api_call_count >= self.MAX_ALLOWED_CALLS:
-            return frame_bytes, "Safety budget limit reached."
+            raise BudgetExceededError("AWS Safety Limit reached.")
 
-        # Decode the incoming JPEG bytes from the phone
-        nparr = np.frombuffer(frame_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return frame_bytes, ""
+        logger.info("VisionAgent: Starting live session for 30s.")
+        
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            logger.error("VisionAgent: Failed to open webcam.")
+            return False
 
-        height, width = frame.shape[:2]
-        if height > 720:
-            scale = 720 / float(height)
-            frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        start_time = time.time()
+        last_api_call = 0
+        last_labels = []
 
-        ret_encode, buffer = cv2.imencode('.jpg', frame)
-        if not ret_encode:
-            return frame_bytes, ""
-
-        current_time = time.time()
-
-        if not hasattr(self, 'last_api_call'):
-            self.last_api_call = 0
-            self.last_labels = []
-            self.last_guidance = ""
-
-        # Throttle AWS call to 1 every 3 seconds
-        if current_time - self.last_api_call >= 3.0:
-            self.last_api_call = current_time
-            self.api_call_count += 1
-            try:
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None, 
-                    lambda: self.rekognition_client.detect_labels(
-                        Image={'Bytes': buffer.tobytes()},
-                        MaxLabels=15,
-                        MinConfidence=70.0
-                    )
-                )
-                self.last_labels = response.get('Labels', [])
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                current_time = time.time()
                 
-                if self.last_labels:
-                    guidance_text = self.sectorize_and_guide(self.last_labels)
-                    if "completely clear" not in guidance_text:
-                        # Multimodal analysis via Nova Pro
-                        system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward and provide directions on how to move away from the obstructions."
-                        user_prompt = f"Rekognition Labels: {self.last_labels}\n\nWhat are the hazards, and what directions should I take to avoid them safely?"
-                        try:
-                            # Use Nova Pro with the image bytes
-                            self.last_guidance = await self._bedrock.invoke_model(
-                                system_prompt=system_prompt,
-                                user_prompt=user_prompt,
-                                model_tier="nova-pro",
-                                image_bytes=buffer.tobytes()
-                            )
-                            if on_obstruction_callback:
-                                asyncio.create_task(on_obstruction_callback(self.last_guidance))
-                        except Exception as bedrock_err:
-                            logger.error(f"VisionAgent: Nova Pro failed, falling back to basic guidance: {bedrock_err}")
-                            self.last_guidance = guidance_text
-                            if on_obstruction_callback:
-                                asyncio.create_task(on_obstruction_callback(self.last_guidance))
-                    else:
-                        self.last_guidance = guidance_text
-                else:
-                    self.last_guidance = ""
-            except Exception as e:
-                logger.error(f"Rekognition error: {e}")
+                if current_time - start_time > 30:
+                    logger.info("VisionAgent: 30s timeout reached.")
+                    break
+                    
+                height, width = frame.shape[:2]
+                if height > 720:
+                    scale = 720 / float(height)
+                    frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-        # Draw bounding boxes (from the last known AWS call) to make the video feel smooth
-        annotated_frame = self._draw_bounding_boxes(frame.copy(), self.last_labels)
-        
-        # Display it on the Mac screen as well for the audience!
-        cv2.imshow("SimplifyNext Mobile Live View", annotated_frame)
-        cv2.waitKey(1)
-        
-        # Re-encode and return to the phone
-        ret, out_buffer = cv2.imencode('.jpg', annotated_frame)
-        return out_buffer.tobytes() if ret else buffer.tobytes(), self.last_guidance
+                # Throttle AWS call to 1 every 3 seconds
+                if current_time - last_api_call >= 3.0:
+                    last_api_call = current_time
+                    ret_encode, buffer = cv2.imencode('.jpg', frame)
+                    if ret_encode:
+                        self.api_call_count += 1
+                        try:
+                            loop = asyncio.get_running_loop()
+                            response = await loop.run_in_executor(
+                                None, 
+                                lambda: self.rekognition_client.detect_labels(
+                                    Image={'Bytes': buffer.tobytes()},
+                                    MaxLabels=15,
+                                    MinConfidence=70.0
+                                )
+                            )
+                            last_labels = response.get('Labels', [])
+                            
+                            if last_labels:
+                                guidance_text = self.sectorize_and_guide(last_labels)
+                                if "completely clear" not in guidance_text and on_obstruction_callback:
+                                    # Layer 2: Multimodal analysis
+                                    system_prompt = "You are a spatial reasoning AI. Analyze this image and the accompanying Rekognition labels. Describe any safety hazards for a blind person walking forward and provide directions on how to move away from the obstructions."
+                                    user_prompt = f"Rekognition Labels: {last_labels}\n\nWhat are the hazards, and what directions should I take to avoid them safely?"
+                                    try:
+                                        deep_context = await self._bedrock.invoke_model(
+                                            system_prompt=system_prompt,
+                                            user_prompt=user_prompt,
+                                            model_tier="nova-pro",
+                                            image_bytes=buffer.tobytes()
+                                        )
+                                        # Pass the rich multimodal response to the callback (Layer 3)
+                                        asyncio.create_task(on_obstruction_callback(deep_context))
+                                    except Exception as bedrock_err:
+                                        logger.error(f"VisionAgent: Nova Pro failed, falling back to basic guidance: {bedrock_err}")
+                                        asyncio.create_task(on_obstruction_callback(guidance_text))
+                        except Exception as e:
+                            logger.error(f"Rekognition error: {e}")
+
+                annotated_frame = self._draw_bounding_boxes(frame.copy(), last_labels)
+                cv2.imshow("Live Vision Feedback", annotated_frame)
+                
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    logger.info("VisionAgent: User quit live session.")
+                    break
+                
+                await asyncio.sleep(0.01)
+
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            # On mac we often need 4 waitKeys to flush events and close the window properly
+            for _ in range(4):
+                cv2.waitKey(1)
+            
+        return True

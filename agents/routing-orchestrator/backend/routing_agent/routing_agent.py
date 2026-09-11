@@ -272,6 +272,7 @@ class RoutingAgent:
                     "lighting": c.accessibility_score.lighting_quality.value,
                     "obstruction_risk": c.accessibility_score.obstruction_risk,
                     "crowding_estimate": c.accessibility_score.crowding_estimate,
+                    "obstruction_risk": c.accessibility_score.obstruction_risk
                 })
             await progress_callback("accessibility_scored", {"routes": acc_data})
 
@@ -457,51 +458,8 @@ class RoutingAgent:
         return {"status": "received", "message_id": msg.message_id, "guidance_text": msg.guidance_text}
 
     # ══════════════════════════════════════════════════════════════════════════
-    # ON-DEMAND VISION (5 m gate) & STREAMING VISION
+    # ON-DEMAND VISION (5 m gate)
     # ══════════════════════════════════════════════════════════════════════════
-
-    async def handle_streaming_obstruction(self, guidance_text: str):
-        """Callback for live VisionAgent stream when an obstruction is detected."""
-        import asyncio
-        if getattr(self, '_is_handling_obstruction', False):
-            return
-        self._is_handling_obstruction = True
-        
-        try:
-            logger.info("RoutingAgent: Received streaming obstruction event from VisionAgent.")
-            
-            # 1. Pause navigation simulator
-            if hasattr(self, '_nav_pause_event'):
-                self._nav_pause_event.clear()
-            
-            # 2. Stop current navigation audio if playing
-            if hasattr(self, '_nav_player') and self._nav_player:
-                try:
-                    self._nav_player.terminate()
-                except ProcessLookupError:
-                    pass
-                    
-            # 3. Play a ping/haptic alert immediately
-            ping_proc = await asyncio.create_subprocess_exec("afplay", "/System/Library/Sounds/Glass.aiff")
-            await ping_proc.wait()
-            
-            # Generate TTS
-            audio_bytes, _ = self._voice.generate_tts_audio(guidance_text)
-            if audio_bytes:
-                import os
-                import tempfile
-                tts_path2 = os.path.join(tempfile.gettempdir(), "temp_stream_tts.mp3")
-                with open(tts_path2, "wb") as f:
-                    f.write(audio_bytes)
-                # Play audio locally for testing and wait for it to finish
-                warn_proc = await asyncio.create_subprocess_exec("afplay", tts_path2)
-                await warn_proc.wait()
-                
-            # 4. Resume navigation
-            if hasattr(self, '_nav_pause_event'):
-                self._nav_pause_event.set()
-        finally:
-            self._is_handling_obstruction = False
 
     async def request_vision_assist(
         self, session_id: str, waypoint_id: str, user_distance_m: float, context: str,

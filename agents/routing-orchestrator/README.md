@@ -5,7 +5,7 @@
 The backend is built with FastAPI. To start the `RoutingAgent` and the entire API server, run the following command from the root directory:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn backend.main:app --reload --port 8000
 ```
 
 Once running, you can interact with the agentic endpoints (like triggering navigation or the vision assistant) via the Swagger UI at `http://127.0.0.1:8000/docs` or via `curl`.

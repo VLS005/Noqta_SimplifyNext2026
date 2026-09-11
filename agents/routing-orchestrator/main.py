@@ -219,54 +219,18 @@ async def websocket_events(session_id: str, websocket: WebSocket) -> None:
     await ws_manager.connect(session_id, websocket)
     try:
         while True:
-            try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-                if data == "ping":
-                    await websocket.send_text("pong")
-            except asyncio.TimeoutError:
-                # Send keepalive but stay in the loop
-                try:
-                    await websocket.send_json({"event": "keepalive"})
-                except Exception:
-                    break  # connection dead, exit
+            data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            if data == "ping":
+                await websocket.send_text("pong")
+    except asyncio.TimeoutError:
+        try:
+            await websocket.send_json({"event": "keepalive"})
+        except Exception:
+            pass
     except WebSocketDisconnect:
         pass
     finally:
         ws_manager.disconnect(session_id, websocket)
-
-@app.websocket("/ws/vision-stream/{session_id}")
-async def vision_stream(session_id: str, websocket: WebSocket, agent: RoutingAgent = Depends(get_routing_agent)) -> None:
-    """Receives live JPEG frames from frontend, processes them via VisionAgent, and returns annotated frames."""
-    import base64
-    await websocket.accept()
-    try:
-        while True:
-            # Receive base64 encoded frame
-            data = await websocket.receive_text()
-            if data.startswith("data:image/jpeg;base64,"):
-                data = data.split(",")[1]
-            
-            frame_bytes = base64.b64decode(data)
-            
-            # Process via VisionAgent
-            annotated_bytes, guidance = await agent._vision.process_frame(frame_bytes, on_obstruction_callback=agent.handle_streaming_obstruction)
-            
-            # Encode back to base64
-            b64_annotated = base64.b64encode(annotated_bytes).decode('utf-8')
-            out_data = f"data:image/jpeg;base64,{b64_annotated}"
-            
-            await websocket.send_json({
-                "image": out_data,
-                "guidance": guidance
-            })
-    except WebSocketDisconnect:
-        logger.info(f"Vision stream disconnected for {session_id}")
-    except Exception as e:
-        logger.error(f"Vision stream error: {e}")
-        try:
-            await websocket.close()
-        except:
-            pass
 
 
 # ─── Lifecycle ────────────────────────────────────────────────────────────────
